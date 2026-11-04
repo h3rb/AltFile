@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alt File Explorer</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar" id="sidebar" aria-label="Navigation">
+      <div class="brand">
+        <img class="brand-logo" src="assets/logo.png" alt="">
+        <div class="brand-text">
+          <div class="brand-name">Alt File</div>
+          <div class="brand-sub">Explorer</div>
+        </div>
+        <span class="mini-badge" id="portable-badge" hidden>PORTABLE</span>
+      </div>
+      <div class="sidebar-body">
+        <div class="nav-section" id="quick-nav"></div>
+        <div class="nav-section">
+          <div class="nav-heading">
+            <span>Bookmarks</span>
+            <button class="icon-btn tiny" id="add-bookmark" type="button" title="Bookmark this folder"></button>
+          </div>
+          <div class="nav-list" id="bookmark-list"></div>
+        </div>
+        <div class="nav-section">
+          <div class="nav-heading"><span>This PC</span></div>
+          <div class="nav-list" id="drive-list"></div>
+        </div>
+      </div>
+      <div class="sidebar-foot">
+        <button class="sidebar-btn" id="settings-btn" type="button"></button>
+        <button class="sidebar-btn hint" id="palette-hint" type="button" title="Command palette">
+          <kbd>Ctrl</kbd><kbd>K</kbd>
+        </button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="workspace">
+        <div class="tabstrip">
+          <div class="tabs" id="tabs" role="tablist" aria-label="Folders"></div>
+          <button class="icon-btn" id="new-tab" type="button" title="New tab (Ctrl+T)" aria-label="New tab"></button>
+        </div>
+
+        <div class="toolbar" id="toolbar">
+          <div class="nav-buttons" role="group" aria-label="Navigation">
+            <button class="icon-btn" id="nav-back" type="button" title="Back (Alt+Left)" aria-label="Back"></button>
+            <button class="icon-btn" id="nav-forward" type="button" title="Forward (Alt+Right)" aria-label="Forward"></button>
+            <button class="icon-btn" id="nav-up" type="button" title="Up one folder (Alt+Up)" aria-label="Up"></button>
+            <button class="icon-btn" id="refresh" type="button" title="Refresh (F5)" aria-label="Refresh"></button>
+          </div>
+
+          <div class="pathbar" id="pathbar">
+            <div class="crumbs" id="crumbs"></div>
+            <input class="path-input" id="path-input" spellcheck="false" autocomplete="off" hidden aria-label="Path">
+            <button class="path-edit" id="path-edit" type="button" title="Edit path (Ctrl+L)" aria-label="Edit path"></button>
+          </div>
+
+          <div class="search" id="searchbox">
+            <span class="search-glyph" id="search-glyph"></span>
+            <input id="search-input" type="text" spellcheck="false" autocomplete="off" placeholder="Filter files" aria-label="Search files">
+            <button class="scope-btn" id="search-scope" type="button" title="Search this folder only"></button>
+            <kbd class="search-kbd">/</kbd>
+          </div>
+
+          <div class="view-switch" role="group" aria-label="View mode">
+            <button type="button" id="view-grid" data-view="grid" title="Grid view (Ctrl+1)"></button>
+            <button type="button" id="view-list" data-view="list" title="List view (Ctrl+2)"></button>
+            <button type="button" id="view-viz" data-view="viz" title="Visualize folder (Ctrl+3)"></button>
+          </div>
+
+          <button class="icon-btn" id="preview-toggle" type="button" title="Toggle preview (Ctrl+P)" aria-label="Toggle preview"></button>
+          <button class="icon-btn" id="more-btn" type="button" title="More actions" aria-label="More actions"></button>
+        </div>
+
+        <div class="filterbar" id="filterbar">
+          <div class="chips" id="chips"></div>
+          <div class="filterbar-right">
+            <button class="pill-btn" id="sort-btn" type="button"></button>
+          </div>
+        </div>
+
+        <div class="content" id="content">
+          <section class="files-pane" id="files-pane" aria-label="Files">
+            <div class="files-head" id="files-head" hidden></div>
+            <div class="files-scroll" id="files-scroll"></div>
+            <div class="pane-state" id="pane-state" hidden></div>
+          </section>
+          <section class="viz-pane" id="viz-pane" hidden aria-label="Folder visualization"></section>
+          <aside class="preview-pane" id="preview-pane" hidden aria-label="Preview"></aside>
+        </div>
+
+        <div class="player-bar" id="player-bar" hidden aria-label="Media player"></div>
+
+        <footer class="statusbar">
+          <div class="status-left">
+            <span id="status-count"></span>
+            <span id="status-selection" class="status-selection"></span>
+          </div>
+          <div class="status-right">
+            <span id="status-hint" class="status-hint"></span>
+            <span id="status-size"></span>
+          </div>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <div id="overlays"></div>
+  <div id="tooltip" class="tooltip" hidden></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
