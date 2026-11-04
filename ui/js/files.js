@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { state, activeTab, app, scheduleSave } from './state.js';
 import { icon, kindIcon } from './icons.js';
+import { fontTileHtml, observeFontTiles } from './fonts.js';
 import {
   esc,
   humanSize,
@@ -43,6 +44,20 @@ const MAX_CACHE = 4000;
 const MAX_REQUESTS = 4;
 let thumbActive = 0;
 let observer = null;
+
+const countCache = new Map();
+const countQueue = [];
+const MAX_COUNT_CACHE = 4000;
+const MAX_COUNT_REQUESTS = 3;
+let countActive = 0;
+let countObserver = null;
+
+const sizeCache = new Map();
+const sizeQueue = [];
+const MAX_SIZE_CACHE = 4000;
+const MAX_SIZE_REQUESTS = 2;
+let sizeActive = 0;
+let sizeObserver = null;
 
 const scrollEl = () => document.getElementById('files-scroll');
 const paneStateEl = () => document.getElementById('pane-state');
@@ -253,6 +268,21 @@ function badgeHtml(entry) {
   return '';
 }
 
+function folderTileHtml(entry) {
+  const color = kindColor(entry.kind);
+  return `
+        <div class="folder-tile" data-count-path="${esc(entry.path)}" data-count-mtime="${entry.modified || 0}" data-size-path="${esc(entry.path)}" data-size-mtime="${entry.modified || 0}" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">
+          <svg class="folder-shape" viewBox="3 5 18 15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <div class="folder-counts" hidden>
+            <span class="count-row">
+              <span class="folder-count" data-role="folders">${icon('folder', 14)}<span class="count-value">0</span></span>
+              <span class="folder-count" data-role="files">${icon('fileText', 14)}<span class="count-value">0</span></span>
+            </span>
+            <span class="folder-size" data-role="size" hidden></span>
+          </div>
+        </div>`;
+}
+
 function cardHtml(entry, index) {
   const color = kindColor(entry.kind);
   const thumb = wantsThumb(entry);
@@ -260,11 +290,15 @@ function cardHtml(entry, index) {
   if (state.selection.has(entry.path)) classes.push('selected');
   if (state.focusIndex === index) classes.push('focused');
   const meta = entry.isDir ? fmtRelative(entry.modified) : humanSize(entry.size);
+  const thumbClass = entry.isDir ? 'card-thumb folder-thumb' : 'card-thumb';
+  const thumbBody = entry.isDir
+    ? folderTileHtml(entry)
+    : `${fontTileHtml(entry) || `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>`}
+        ${thumb ? '<img alt="" decoding="async" draggable="false">' : ''}`;
   return `
     <article class="${classes.join(' ')}" data-path="${esc(entry.path)}" data-index="${index}" title="${esc(entry.path)}">
-      <div class="card-thumb"${thumb ? ` data-thumb-path="${esc(entry.path)}" data-thumb-mtime="${entry.modified || 0}"` : ''}>
-        <div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>
-        ${thumb ? '<img alt="" decoding="async" draggable="false">' : ''}
+      <div class="${thumbClass}"${thumb ? ` data-thumb-path="${esc(entry.path)}" data-thumb-mtime="${entry.modified || 0}"` : ''}>
+        ${thumbBody}
         ${badgeHtml(entry)}
       </div>
       <div class="card-name">${nameHtml(entry)}</div>
@@ -288,7 +322,7 @@ function rowHtml(entry, index) {
         <span class="row-name">${nameHtml(entry)}</span>
         ${entry.isSymlink ? '<span class="symlink-badge">link</span>' : ''}
       </div>
-      <div class="cell-size">${entry.isDir ? '—' : esc(humanSize(entry.size))}</div>
+      <div class="cell-size"${entry.isDir ? ` data-size-path="${esc(entry.path)}" data-size-mtime="${entry.modified || 0}"` : ''}>${entry.isDir ? '—' : esc(humanSize(entry.size))}</div>
       <div class="cell-date">${esc(fmtDate(entry.modified))}</div>
       <div class="cell-kind">${esc(kindLabel(entry.kind))}</div>
     </div>`;
@@ -480,6 +514,9 @@ export function renderFiles() {
   }
 
   observeThumbs();
+  observeCounts();
+  observeFontTiles();
+  observeSizes();
   paintSelection();
   updateStatus();
   app.onSelectionChange?.();
@@ -606,6 +643,182 @@ function observeThumbs() {
     { root: scroll, rootMargin: '320px 0px' }
   );
   targets.forEach((target) => observer.observe(target));
+}
+
+function countsKey(path, mtime, showHidden) {
+  return `${path.toLowerCase()}|${mtime}|${showHidden ? 1 : 0}`;
+}
+
+function compactCount(value) {
+  const count = Number(value) || 0;
+  if (count < 1000) return String(count);
+  if (count < 999_500) {
+    const thousands = count / 1000;
+    return `${thousands < 10 ? thousands.toFixed(1).replace(/\.0$/, '') : Math.round(thousands)}k`;
+  }
+  const millions = count / 1_000_000;
+  return `${millions < 10 ? millions.toFixed(1).replace(/\.0$/, '') : Math.round(millions)}m`;
+}
+
+function applyCounts(el, counts) {
+  if (!el || !counts) return;
+  const row = el.querySelector('.folder-counts');
+  if (!row) return;
+  const set = (role, value) => {
+    const valueEl = row.querySelector(`[data-role="${role}"] .count-value`);
+    if (valueEl) valueEl.textContent = compactCount(value);
+  };
+  set('folders', counts.folders);
+  set('files', counts.files);
+  row.title = `${humanCount(counts.folders)} folders · ${humanCount(counts.files)} files`;
+  row.hidden = false;
+}
+
+function pumpCounts() {
+  while (countActive < MAX_COUNT_REQUESTS && countQueue.length) {
+    const job = countQueue.shift();
+    countActive += 1;
+    api
+      .folderCounts(job.path, job.showHidden)
+      .then((counts) => {
+        countCache.set(job.key, counts);
+        if (countCache.size > MAX_COUNT_CACHE) {
+          const oldest = countCache.keys().next().value;
+          if (oldest !== undefined) countCache.delete(oldest);
+        }
+        if (job.el.isConnected) applyCounts(job.el, counts);
+      })
+      .catch(() => {
+        countCache.set(job.key, null);
+      })
+      .finally(() => {
+        countActive -= 1;
+        pumpCounts();
+      });
+  }
+}
+
+function loadCounts(el) {
+  if (!el || el.dataset.countLoaded === '1') return;
+  el.dataset.countLoaded = '1';
+  const path = el.dataset.countPath;
+  if (!path) return;
+  const mtime = Number(el.dataset.countMtime) || 0;
+  const showHidden = Boolean(activeTab()?.showHidden);
+  const key = countsKey(path, mtime, showHidden);
+  if (countCache.has(key)) {
+    const counts = countCache.get(key);
+    if (counts) applyCounts(el, counts);
+    return;
+  }
+  countQueue.push({ key, path, showHidden, el });
+  pumpCounts();
+}
+
+function observeCounts() {
+  if (countObserver) countObserver.disconnect();
+  const scroll = scrollEl();
+  if (!scroll) return;
+  const targets = scroll.querySelectorAll('.folder-tile[data-count-path]');
+  if (!targets.length) return;
+
+  if (!('IntersectionObserver' in window)) {
+    targets.forEach(loadCounts);
+    return;
+  }
+  countObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        countObserver.unobserve(entry.target);
+        loadCounts(entry.target);
+      }
+    },
+    { root: scroll, rootMargin: '240px 0px' }
+  );
+  targets.forEach((target) => countObserver.observe(target));
+}
+
+function applySize(el, info) {
+  if (!el || !info) return;
+  const label = `${humanSize(info.bytes)}${info.truncated ? '+' : ''}`;
+  const title = info.truncated ? 'Partial size of a very large folder' : '';
+  const chip = el.querySelector('.folder-size');
+  if (chip) {
+    const row = el.querySelector('.folder-counts');
+    if (row) row.hidden = false;
+    chip.textContent = label;
+    chip.title = title;
+    chip.hidden = false;
+    return;
+  }
+  el.textContent = label;
+  if (title) el.title = title;
+}
+
+function pumpSizes() {
+  while (sizeActive < MAX_SIZE_REQUESTS && sizeQueue.length) {
+    const job = sizeQueue.shift();
+    sizeActive += 1;
+    api
+      .folderSize(job.path, job.showHidden)
+      .then((info) => {
+        sizeCache.set(job.key, info);
+        if (sizeCache.size > MAX_SIZE_CACHE) {
+          const oldest = sizeCache.keys().next().value;
+          if (oldest !== undefined) sizeCache.delete(oldest);
+        }
+        if (job.el.isConnected) applySize(job.el, info);
+      })
+      .catch(() => {
+        sizeCache.set(job.key, null);
+      })
+      .finally(() => {
+        sizeActive -= 1;
+        pumpSizes();
+      });
+  }
+}
+
+function loadSize(el) {
+  if (!el || el.dataset.sizeLoaded === '1') return;
+  el.dataset.sizeLoaded = '1';
+  const path = el.dataset.sizePath;
+  if (!path) return;
+  const mtime = Number(el.dataset.sizeMtime) || 0;
+  const showHidden = Boolean(activeTab()?.showHidden);
+  const key = countsKey(path, mtime, showHidden);
+  if (sizeCache.has(key)) {
+    const info = sizeCache.get(key);
+    if (info) applySize(el, info);
+    return;
+  }
+  sizeQueue.push({ key, path, showHidden, el });
+  pumpSizes();
+}
+
+function observeSizes() {
+  if (sizeObserver) sizeObserver.disconnect();
+  const scroll = scrollEl();
+  if (!scroll) return;
+  const targets = scroll.querySelectorAll('.folder-tile[data-size-path], .cell-size[data-size-path]');
+  if (!targets.length) return;
+
+  if (!('IntersectionObserver' in window)) {
+    targets.forEach(loadSize);
+    return;
+  }
+  sizeObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        sizeObserver.unobserve(entry.target);
+        loadSize(entry.target);
+      }
+    },
+    { root: scroll, rootMargin: '240px 0px' }
+  );
+  targets.forEach((target) => sizeObserver.observe(target));
 }
 
 function scrollIndexIntoView(index) {

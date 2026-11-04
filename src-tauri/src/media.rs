@@ -33,7 +33,7 @@ fn mime_for(ext: &str) -> &'static str {
     }
 }
 
-fn percent_decode(input: &str) -> Option<String> {
+pub(crate) fn percent_decode(input: &str) -> Option<String> {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

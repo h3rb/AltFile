@@ -45,7 +45,6 @@ export function renderSidebar() {
   const driveList = document.getElementById('drive-list');
   const settingsBtn = document.getElementById('settings-btn');
   const addBtn = document.getElementById('add-bookmark');
-  const badge = document.getElementById('portable-badge');
   if (!quick || !bookmarkList || !driveList) return;
 
   const current = activePath();
@@ -55,11 +54,6 @@ export function renderSidebar() {
 
   if (settingsBtn) settingsBtn.innerHTML = `${icon('settings', 15)}<span>Settings</span>`;
   if (addBtn) addBtn.innerHTML = icon('plus', 13);
-
-  if (badge) {
-    badge.hidden = !state.app?.portable;
-    badge.title = state.app?.portable ? `Portable data: ${state.app.dataDir}` : '';
-  }
 
   quick.innerHTML = `
     <div class="nav-heading"><span>Quick access</span></div>
@@ -150,9 +144,21 @@ function onListClick(event) {
   app.navigate?.(item.dataset.path);
 }
 
+function onListContextMenu(event) {
+  if (event.target.closest('.nav-remove')) return;
+  const item = event.target.closest('.nav-item[data-path]');
+  if (!item) return;
+  event.preventDefault();
+  event.stopPropagation();
+  app.navMenu?.(item.dataset.path, event.clientX, event.clientY);
+}
+
 export function initSidebar() {
   const roots = [document.getElementById('quick-nav'), document.getElementById('bookmark-list'), document.getElementById('drive-list')];
-  roots.forEach((root) => root?.addEventListener('click', onListClick));
+  roots.forEach((root) => {
+    root?.addEventListener('click', onListClick);
+    root?.addEventListener('contextmenu', onListContextMenu);
+  });
 
   document.getElementById('settings-btn')?.addEventListener('click', () => app.openSettings?.());
   document.getElementById('add-bookmark')?.addEventListener('click', () => app.bookmarkCurrent?.());

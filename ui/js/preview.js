@@ -3,6 +3,7 @@ import { state, app } from './state.js';
 import { selectedEntries, focusedEntry } from './files.js';
 import { icon, kindIcon } from './icons.js';
 import { playEntry, addToPlaylist } from './player.js';
+import { fontTileHtml, observeFontTiles } from './fonts.js';
 import {
   esc,
   basename,
@@ -117,6 +118,8 @@ function videoMediaHtml(entry, info, thumb) {
 function mediaHtml(entry, thumb, info) {
   if (info.kind === 'audio') return audioMediaHtml(entry, info);
   if (info.kind === 'video') return videoMediaHtml(entry, info, thumb);
+  const font = fontTileHtml(entry, { large: true });
+  if (font) return `<div class="preview-media">${font}</div>`;
   const badge = `${kindLabel(info.kind)}${info.ext ? ` · ${info.ext.toUpperCase()}` : ''}`;
   if (thumb && thumb.url) {
     return `
@@ -346,6 +349,18 @@ async function wireAudioPreview(entry, info, body, token) {
   const statusEl = body.querySelector('[data-audio-state]');
   const lengthEl = body.querySelector('[data-audio-length]');
   if (!canvas) return;
+  let seekDuration = 0;
+
+  canvas.addEventListener('click', (event) => {
+    if (!seekDuration) return;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width) return;
+    const fraction = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    playEntry(
+      { path: entry.path, name: basename(entry.path), kind: 'audio' },
+      { startAt: fraction * seekDuration }
+    );
+  });
 
   const key = `${entry.path.toLowerCase()}|${entry.modified || 0}|${info.size || 0}`;
   let data = waveformCache.get(key);
@@ -380,6 +395,7 @@ async function wireAudioPreview(entry, info, body, token) {
 
   if (token !== state.preview.token || !canvas.isConnected) return;
 
+  seekDuration = data.duration || 0;
   drawWaveform(canvas, data.peaks);
   if (typeof ResizeObserver === 'function') {
     const observer = new ResizeObserver(() => drawWaveform(canvas, data.peaks));
@@ -419,6 +435,7 @@ async function wireAudioPreview(entry, info, body, token) {
   if (!data.duration) {
     probeDuration(entry, (seconds) => {
       if (token !== state.preview.token || !canvas.isConnected) return;
+      seekDuration = seconds;
       if (lengthEl) lengthEl.textContent = fmtDuration(seconds);
       setMetaField(body, 'duration', fmtDuration(seconds));
       if (info.size && seconds > 0) {
@@ -571,6 +588,7 @@ export function renderPreview() {
       if (token !== state.preview.token) return;
 
       body.innerHTML = subjectHtml(entry, info, thumb, text);
+      observeFontTiles(body);
       const media = body.querySelector('.preview-media img');
       if (media) {
         media.onerror = () => {

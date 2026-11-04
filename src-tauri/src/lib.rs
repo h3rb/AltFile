@@ -1,8 +1,10 @@
 mod fsops;
+mod fonts;
 mod media;
 mod paths;
 mod search;
 mod settings;
+mod shellmenu;
 mod thumbs;
 mod viz;
 
@@ -119,6 +121,7 @@ pub fn run() {
     tauri::Builder::default()
         .register_uri_scheme_protocol("thumb", serve_thumbnail)
         .register_uri_scheme_protocol("media", media::serve)
+        .register_uri_scheme_protocol("font", fonts::serve)
         .setup(|app| {
             let portable = portable_root();
             let data_dir = match &portable {
@@ -157,6 +160,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             fsops::list_dir,
+            fsops::folder_counts,
+            fsops::folder_size,
             fsops::list_places,
             fsops::open_path,
             fsops::reveal_path,
@@ -168,6 +173,8 @@ pub fn run() {
             fsops::create_folder,
             fsops::rename_path,
             fsops::watch_directory,
+            shellmenu::shell_menu_items,
+            shellmenu::shell_menu_invoke,
             thumbs::thumbnail,
             thumbs::thumbnail_cache_stats,
             thumbs::clear_thumbnail_cache,

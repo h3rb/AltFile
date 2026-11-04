@@ -143,9 +143,17 @@ async function updateCacheLine() {
 export function openSettings() {
   const body = document.createElement('div');
   body.innerHTML = settingsHtml();
+  const appInfo = state.app || {};
   const modal = openModal({
-    title: 'Settings',
-    subtitle: 'Tune the explorer to your workflow',
+    headerClass: 'settings-head',
+    headerHtml: `
+      <div class="settings-brand">
+        <img class="settings-logo" src="assets/logo.png" alt="">
+        <span class="settings-app-name">Alt File Explorer</span>
+        <span class="settings-divider" aria-hidden="true"></span>
+        <h2 class="settings-title">Settings</h2>
+      </div>
+      ${appInfo.portable ? `<span class="mini-badge settings-portable" title="Portable data: ${esc(appInfo.dataDir || '')}">PORTABLE</span>` : ''}`,
     body,
     width: 660,
     actions: [{ label: 'Done', kind: 'primary' }],

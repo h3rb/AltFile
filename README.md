@@ -10,15 +10,26 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **Smart thumbnails** generated on demand and cached by content hash (512 MB LRU-style cache):
   - Windows: images (with EXIF orientation), video/audio posters, PDF and Office documents, and executable icons via the shell.
   - Linux: images, video posters through `ffmpeg`, and PDF first pages through `pdftoppm` when available.
+- **Grid folder cards** fill the preview box with an oversized folder and show live subfolder/file counts, each
+  marked with a folder or document icon; counts load lazily and honor the hidden-file toggle.
+- **Folder content size**: the same tile shows the recursive size of the folder, and list view replaces the `—`
+  in the size column with it. Sizes walk the tree lazily for visible rows with a time/entry budget, so a partial
+  total is suffixed with `+` instead of blocking the view.
+- **Font specimens**: `.ttf`, `.otf`, `.woff` and `.woff2` cards and the preview pane render `AaBbCc…Zz01234`
+  in the actual typeface, loaded lazily for visible tiles through the `font://` protocol.
 - **Treemap visualization** for the active folder: squarified tiles, drill-down, hover tooltip, large-file and
-  extension/contents insights, hidden-file support, and cancellable scans.
+  extension/contents insights, hidden-file support, and cancellable scans. Folder tiles show their immediate
+  children nested inside so a folder's makeup is visible without drilling in.
 - **Preview pane** with media thumbnails, file metadata, image dimensions, and text previews (UTF-8/UTF-16).
-- **Media previews and playlist**: audio waveforms with duration, bitrate, sample rate, and channels; video
-  frame previews with hover scrubbing over the timeline; and a persistent player with a queue you can fill
-  from the preview pane, context menu, or command palette (`Space` toggles playback).
+- **Media previews and playlist**: audio waveforms with duration, bitrate, sample rate, and channels
+  (click the waveform to start playback at that point); video frame previews with hover scrubbing over
+  the timeline; and a persistent player with a queue you can fill from the preview pane, context menu,
+  or command palette (`Space` toggles playback).
 - **Search** the current folder instantly, or recurse into subfolders with gitignore-aware walking.
 - **File operations**: create folder, rename, copy/cut/paste with collision-safe names, reveal, properties,
   and delete to the system Trash.
+- **System Menu** (Windows): right-click any drive, file or folder — including treemap tiles — and open
+  the real shell context menu, with shell extensions and submenus, as a submenu of the app menu.
 - **Keyboard-first**: command palette, quick paths, vim-free arrow navigation, and standard shortcuts.
 - **Portable mode**: place `portable.txt` next to the executable and settings, session, and thumbnails are kept
   in a `data` folder beside it. On Windows the WebView2 profile moves there too.
@@ -121,9 +132,12 @@ the executable at compile time.
 - `src-tauri/src/viz.rs` — bounded recursive folder scan with progress events and generation-based
   cancellation; returns a pruned tree, largest files, and extension statistics.
 - `src-tauri/src/search.rs` — fuzzy, gitignore-aware recursive filename search.
+- `src-tauri/src/shellmenu.rs` — Windows shell `IContextMenu` enumeration and invocation behind the System Menu.
+- `src-tauri/src/fonts.rs` — streams `.ttf`/`.otf`/`.woff`/`.woff2` bytes with the right media type over the
+  `font://` / `http://font.localhost` protocol so the UI can register them as live `FontFace` specimens.
 - `src-tauri/src/settings.rs` — atomic JSON settings/session storage.
-- `ui/js/` — the application: `files.js` (rendering, selection, lazy thumbnails), `viz.js` (treemap),
-  `preview.js`, `ops.js`, `palette.js`, `settings.js`, and `main.js` (navigation, tabs, shortcuts).
+- `ui/js/` — the application: `files.js` (rendering, selection, lazy thumbnails), `fonts.js` (font specimens),
+  `viz.js` (treemap), `preview.js`, `ops.js`, `palette.js`, `settings.js`, and `main.js` (navigation, tabs, shortcuts).
 
 Data locations:
 

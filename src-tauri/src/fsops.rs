@@ -32,6 +32,20 @@ pub struct Listing {
     pub truncated: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderCounts {
+    pub folders: u64,
+    pub files: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderSize {
+    pub bytes: u64,
+    pub truncated: bool,
+}
+
 fn modified_ms(meta: &fs::Metadata) -> u64 {
     meta.modified()
         .ok()
@@ -110,6 +124,85 @@ pub fn list_dir(path: String, show_hidden: bool) -> Result<Listing, String> {
         entries,
         truncated,
     })
+}
+
+#[tauri::command]
+pub fn folder_counts(path: String, show_hidden: bool) -> Result<FolderCounts, String> {
+    let dir = paths::resolve_dir(&path)?;
+    let read = fs::read_dir(&dir).map_err(|e| paths::io_msg(&e, &dir))?;
+
+    let mut folders = 0u64;
+    let mut files = 0u64;
+
+    for item in read {
+        let item = match item {
+            Ok(i) => i,
+            Err(_) => continue,
+        };
+        let name = item.file_name().to_string_lossy().into_owned();
+        let item_path = item.path();
+        let meta = match item.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if !show_hidden && paths::hidden(&name, &meta) {
+            continue;
+        }
+        let is_dir = if paths::is_reparse(&meta) {
+            fs::metadata(&item_path)
+                .map(|m| m.is_dir())
+                .unwrap_or(meta.is_dir())
+        } else {
+            meta.is_dir()
+        };
+        if is_dir {
+            folders += 1;
+        } else {
+            files += 1;
+        }
+    }
+
+    Ok(FolderCounts { folders, files })
+}
+
+const SIZE_ENTRY_CAP: u64 = 300_000;
+const SIZE_BUDGET_MS: u64 = 1500;
+
+#[tauri::command]
+pub fn folder_size(path: String, show_hidden: bool) -> Result<FolderSize, String> {
+    let dir = paths::resolve_dir(&path)?;
+    let started = Instant::now();
+    let mut bytes = 0u64;
+    let mut visited = 0u64;
+    let mut truncated = false;
+
+    let walker = walkdir::WalkDir::new(&dir)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            if show_hidden || entry.depth() == 0 {
+                return true;
+            }
+            match entry.metadata() {
+                Ok(meta) => !paths::hidden(&entry.file_name().to_string_lossy(), &meta),
+                Err(_) => true,
+            }
+        });
+
+    for item in walker.flatten() {
+        visited += 1;
+        if visited > SIZE_ENTRY_CAP || started.elapsed().as_millis() as u64 > SIZE_BUDGET_MS {
+            truncated = true;
+            break;
+        }
+        let Ok(meta) = item.metadata() else { continue };
+        if meta.is_file() {
+            bytes = bytes.saturating_add(meta.len());
+        }
+    }
+
+    Ok(FolderSize { bytes, truncated })
 }
 
 #[derive(Serialize, Clone)]

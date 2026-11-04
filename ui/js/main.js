@@ -28,6 +28,7 @@ import * as viz from './viz.js';
 import * as ops from './ops.js';
 import * as palette from './palette.js';
 import { openSettings } from './settings.js';
+import { systemMenuItem } from './systemmenu.js';
 
 const VIEW_BUTTONS = { grid: 'view-grid', list: 'view-list', viz: 'view-viz' };
 const SORT_LABELS = { name: 'Name', size: 'Size', modified: 'Modified', kind: 'Kind' };
@@ -650,7 +651,22 @@ function backgroundMenu(x, y) {
       { label: 'Bookmark this folder', icon: 'bookmark', onClick: () => sidebar.addBookmarkCurrent() },
       { label: 'Command palette', icon: 'command', shortcut: 'Ctrl+K', onClick: () => openPalette() },
       { separator: true },
+      systemMenuItem(tab.path),
       { label: 'Settings', icon: 'settings', onClick: () => openSettings() },
+    ],
+  });
+}
+
+function navMenu(path, x, y) {
+  showMenu({
+    x,
+    y,
+    items: [
+      { label: 'Open', icon: 'folderOpen', onClick: () => navigate(path) },
+      { label: 'Open in new tab', icon: 'plus', onClick: () => openTab(path) },
+      { label: 'Reveal in file manager', icon: 'external', onClick: () => ops.revealEntry({ path, isDir: true }) },
+      { separator: true },
+      systemMenuItem(path),
     ],
   });
 }
@@ -660,6 +676,8 @@ function entryMenu(entry, x, y) {
   const targets = list.length ? list : [entry];
   const single = targets.length === 1;
   const playable = targets.filter((item) => !item.isDir && (item.kind === 'audio' || item.kind === 'video'));
+  const systemMenu = systemMenuItem(entry.path);
+  if (!single) systemMenu.hidden = true;
   showMenu({
     x,
     y,
@@ -704,6 +722,8 @@ function entryMenu(entry, x, y) {
         onClick: () => visualizePath(entry.path),
       },
       { label: 'Reveal in file manager', icon: 'external', onClick: () => ops.revealEntry(entry) },
+      { separator: true },
+      systemMenu,
       { separator: true },
       {
         label: targets.length > 1 ? `Copy ${targets.length} items` : 'Copy',
@@ -1104,6 +1124,7 @@ function assignBridge() {
     togglePlayback: player.togglePlay,
     entryMenu,
     backgroundMenu,
+    navMenu,
     toast,
     copyText: (text) =>
       api.copyText(text).then(

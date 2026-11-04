@@ -8,6 +8,12 @@ export function mediaUrl(path) {
     : `media://localhost/${encoded}`;
 }
 
+export function fontUrl(path, mtime = 0) {
+  const encoded = encodeURIComponent(path || '');
+  const base = IS_WINDOWS ? `http://font.localhost/${encoded}` : `font://localhost/${encoded}`;
+  return mtime ? `${base}?m=${mtime}` : base;
+}
+
 function invoke(cmd, args) {
   if (!tauri?.core?.invoke) {
     return Promise.reject(new Error('Tauri bridge unavailable'));
@@ -19,8 +25,12 @@ export const api = {
   appInfo: () => invoke('app_info'),
   listPlaces: () => invoke('list_places'),
   listDir: (path, showHidden) => invoke('list_dir', { path, showHidden }),
+  folderCounts: (path, showHidden) => invoke('folder_counts', { path, showHidden }),
+  folderSize: (path, showHidden) => invoke('folder_size', { path, showHidden }),
   openPath: (path) => invoke('open_path', { path }),
   revealPath: (path) => invoke('reveal_path', { path }),
+  shellMenuItems: (path) => invoke('shell_menu_items', { path }),
+  shellMenuInvoke: (path, id) => invoke('shell_menu_invoke', { path, id }),
   copyText: (text) => invoke('copy_text', { text }),
   fileInfo: (path) => invoke('file_info', { path }),
   textPreview: (path, maxBytes) => invoke('text_preview', { path, maxBytes }),

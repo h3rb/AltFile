@@ -11,6 +11,7 @@ import {
   kindColor,
 } from './util.js';
 import { showMenu } from './dialogs.js';
+import { systemMenuItem } from './systemmenu.js';
 
 const MAX_CACHED_SCANS = 6;
 const DIR_PALETTE = ['#2dd4bf', '#60a5fa', '#a78bfa', '#f472b6', '#fbbf24', '#4ade80', '#fb923c'];
@@ -371,7 +372,7 @@ function selectedCard(node, focus) {
         <div class="sel-meta">
           <span class="sel-pill">${esc(node.isDir ? 'Folder' : kindLabel(node.kind))}</span>
           <span class="sel-pill">${humanSize(node.size)}</span>
-          <span class="sel-pill">${percent(node.size, focus?.size || 0)} of view</span>
+          <span class="sel-pill">${percent(node.size, focus?.size || 0)} of ${humanSize(focus?.size || 0)}</span>
           ${node.isDir ? `<span class="sel-pill">${humanCount(node.fileCount)} ${node.fileCount === 1 ? 'file' : 'files'}</span>` : ''}
         </div>
         <div class="sel-actions">
@@ -594,6 +595,80 @@ function drawFolderGlyph(ctx, x, y, size, color) {
   ctx.restore();
 }
 
+const NESTED_CHILD_LIMIT = 80;
+
+function drawFolderContents(ctx, node, x, y, w, h, hovered) {
+  const header = 19;
+  const innerX = x + 2;
+  const innerY = y + header;
+  const innerW = w - 4;
+  const innerH = h - header - 2;
+  if (innerW < 8 || innerH < 8) return;
+
+  let children = (node.children || []).filter((child) => child.size > 0);
+  if (!children.length) return;
+  if (children.length > NESTED_CHILD_LIMIT) {
+    const rest = children.slice(NESTED_CHILD_LIMIT - 1);
+    const restSize = rest.reduce((sum, child) => sum + child.size, 0);
+    children = children.slice(0, NESTED_CHILD_LIMIT - 1);
+    if (restSize > 0) {
+      children.push({
+        name: `+${rest.length} more`,
+        size: restSize,
+        kind: 'other',
+        isDir: false,
+        path: `${node.path}\u0000rest`,
+      });
+    }
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  const radius = Math.min(4, Math.min(w, h) / 3);
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x + 1.2, y + 1.2, Math.max(0, w - 2.4), Math.max(0, h - 2.4), radius);
+  } else {
+    ctx.rect(x + 1.2, y + 1.2, Math.max(0, w - 2.4), Math.max(0, h - 2.4));
+  }
+  ctx.clip();
+
+  ctx.fillStyle = 'rgba(3, 6, 10, 0.46)';
+  ctx.fillRect(innerX, innerY, innerW, innerH);
+
+  const cells = [];
+  layoutTreemap(children, innerX, innerY, innerW, innerH, cells);
+  for (const cell of cells) {
+    const { node: child, x: cx, y: cy, w: cw, h: ch } = cell;
+    if (cw < 1.2 || ch < 1.2) continue;
+    const color = colorFor(child);
+    const alpha = child.isDir ? (hovered ? 0.62 : 0.5) : hovered ? 0.78 : 0.66;
+
+    ctx.fillStyle = toRgba(color, alpha);
+    ctx.fillRect(cx + 0.5, cy + 0.5, Math.max(0, cw - 1), Math.max(0, ch - 1));
+    ctx.lineWidth = 0.7;
+    ctx.strokeStyle = 'rgba(3, 6, 10, 0.6)';
+    ctx.strokeRect(cx + 0.5, cy + 0.5, Math.max(0, cw - 1), Math.max(0, ch - 1));
+
+    if (cw > 30 && ch > 12) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(cx + 1, cy + 1, Math.max(0, cw - 2), Math.max(0, ch - 2));
+      ctx.clip();
+      ctx.font = '500 9px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(242, 249, 255, 0.92)';
+      ctx.textBaseline = 'top';
+      ctx.fillText(fitText(ctx, child.name, cw - 7), cx + 3, cy + 2);
+      ctx.restore();
+    }
+  }
+
+  if (hovered) {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.fillRect(x + 1.2, y + 1.2, Math.max(0, w - 2.4), Math.max(0, h - 2.4));
+  }
+  ctx.restore();
+}
+
 function fitText(ctx, text, maxWidth) {
   if (maxWidth <= 6) return '';
   if (ctx.measureText(text).width <= maxWidth) return text;
@@ -641,15 +716,25 @@ function paint() {
     const selected = state.viz.selectedPath === node.path && !isSynthetic(node);
     const baseAlpha = node.isDir ? 0.34 : 0.52;
 
-    ctx.beginPath();
-    const radius = Math.min(4, Math.min(w, h) / 3);
-    if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(x + 1.2, y + 1.2, Math.max(0, w - 2.4), Math.max(0, h - 2.4), radius);
-    } else {
-      ctx.rect(x + 1.2, y + 1.2, Math.max(0, w - 2.4), Math.max(0, h - 2.4));
-    }
+    const trace = () => {
+      ctx.beginPath();
+      const radius = Math.min(4, Math.min(w, h) / 3);
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(x + 1.2, y + 1.2, Math.max(0, w - 2.4), Math.max(0, h - 2.4), radius);
+      } else {
+        ctx.rect(x + 1.2, y + 1.2, Math.max(0, w - 2.4), Math.max(0, h - 2.4));
+      }
+    };
+    trace();
     ctx.fillStyle = toRgba(color, hovered ? baseAlpha + 0.2 : selected ? baseAlpha + 0.12 : baseAlpha);
     ctx.fill();
+
+    const folderBlock = node.isDir && !isSynthetic(node);
+    const hasChildren = folderBlock && (node.children || []).some((child) => child.size > 0);
+    const showContents = hasChildren && w >= 60 && h >= 54;
+    if (showContents) drawFolderContents(ctx, node, x, y, w, h, hovered);
+
+    trace();
     ctx.lineWidth = selected ? 2 : hovered ? 1.4 : 1;
     ctx.strokeStyle = selected
       ? toRgba('#5eead4', 0.95)
@@ -658,7 +743,6 @@ function paint() {
         : toRgba(color, 0.42);
     ctx.stroke();
 
-    const folderBlock = node.isDir && !isSynthetic(node);
     if (folderBlock && w >= 20 && h >= 18) {
       drawFolderGlyph(ctx, x + 5, y + 5, w > 44 && h > 20 ? 11 : 9, 'rgba(246, 251, 255, 0.88)');
     }
@@ -675,7 +759,7 @@ function paint() {
         ctx.fillStyle = hovered ? 'rgba(255, 255, 255, 0.98)' : 'rgba(238, 245, 252, 0.9)';
         ctx.textBaseline = 'top';
         ctx.fillText(label, labelX, y + 6);
-        if (h > 38 && w > 64) {
+        if (!showContents && h > 38 && w > 64) {
           ctx.font = '500 9.5px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif';
           ctx.fillStyle = 'rgba(226, 236, 248, 0.62)';
           ctx.fillText(fitText(ctx, humanSize(node.size), w - 12), x + 6, y + 21);
@@ -700,11 +784,18 @@ function updateLegend(children) {
   const el = document.getElementById('viz-legend');
   if (!el) return;
   const kinds = new Map();
+  const addKind = (kind) => {
+    if (!kind || kinds.has(kind)) return;
+    kinds.set(kind, kindColor(kind));
+  };
   for (const child of children) {
     if (child.isDir) {
-      if (!kinds.has('folder')) kinds.set('folder', kindColor('folder'));
-    } else if (!kinds.has(child.kind)) {
-      kinds.set(child.kind, kindColor(child.kind));
+      addKind('folder');
+      for (const nested of child.children || []) {
+        if (!nested.isDir) addKind(nested.kind);
+      }
+    } else {
+      addKind(child.kind);
     }
   }
   if (!kinds.size) {
@@ -746,7 +837,7 @@ function showTooltip(rect, clientX, clientY) {
   const share = percent(node.size, focus?.size || 0);
   tooltip.innerHTML = `
     <strong>${esc(node.name)}</strong>
-    <div>${esc(detail)} · ${humanSize(node.size)} · ${esc(share)} of view${node.isDir ? ` · ${humanCount(node.fileCount)} ${node.fileCount === 1 ? 'file' : 'files'}` : ''}</div>
+    <div>${esc(detail)} · ${humanSize(node.size)} · ${esc(share)} of ${humanSize(focus?.size || 0)}${node.isDir ? ` · ${humanCount(node.fileCount)} ${node.fileCount === 1 ? 'file' : 'files'}` : ''}</div>
     ${samePath(node.path, focus?.path) ? '' : `<div class="tt-path">${esc(node.path)}</div>`}`;
   tooltip.hidden = false;
   const box = wrap.getBoundingClientRect();
@@ -848,6 +939,8 @@ function onCanvasContextMenu(event) {
       { separator: true },
       { label: 'Reveal in file manager', icon: 'external', onClick: () => app.reveal?.({ path: node.path }) },
       { label: 'Copy path', icon: 'copy', onClick: () => app.copyPath?.([{ path: node.path }]) },
+      { separator: true },
+      systemMenuItem(node.path, { hidden: isSynthetic(node) || (node.path || '').length === 0 }),
     ],
   });
 }

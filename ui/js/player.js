@@ -16,6 +16,7 @@ let queueOpen = false;
 let artToken = 0;
 let userInitiated = false;
 let suppressError = false;
+let pendingSeek = null;
 
 function current() {
   const index = state.media.index;
@@ -140,7 +141,7 @@ function renderQueue() {
   ui.queueList.querySelector('.pq-item.active')?.scrollIntoView({ block: 'nearest' });
 }
 
-function playIndex(index, { autoplay = true, user = true } = {}) {
+function playIndex(index, { autoplay = true, user = true, startAt = null } = {}) {
   const list = state.media.queue;
   if (!list.length) return;
   const next = clamp(index, 0, list.length - 1);
@@ -148,6 +149,7 @@ function playIndex(index, { autoplay = true, user = true } = {}) {
   state.media.index = next;
   userInitiated = user;
   suppressError = false;
+  pendingSeek = Number.isFinite(startAt) ? Math.max(0, startAt) : null;
   duration = 0;
   setDuration(0);
   paintSeek(0, 0);
@@ -167,7 +169,7 @@ function playIndex(index, { autoplay = true, user = true } = {}) {
   scheduleSave();
 }
 
-export function playEntry(entry, { autoplay = true } = {}) {
+export function playEntry(entry, { autoplay = true, startAt = null } = {}) {
   const item = itemFor(entry);
   if (!item) {
     toast('Only audio and video files can be played', { type: 'warn' });
@@ -182,7 +184,7 @@ export function playEntry(entry, { autoplay = true } = {}) {
     if (state.media.index >= index) state.media.index += 1;
     renderQueue();
   }
-  playIndex(index, { autoplay });
+  playIndex(index, { autoplay, startAt });
 }
 
 export function addToPlaylist(entries) {
@@ -250,6 +252,7 @@ function step(delta, wrap) {
 function stopPlayback() {
   if (!engine) return;
   suppressError = true;
+  pendingSeek = null;
   engine.pause();
   engine.removeAttribute('src');
   engine.load();
@@ -372,6 +375,13 @@ export function initPlayer() {
   document.body.append(engine);
 
   engine.addEventListener('loadedmetadata', () => {
+    if (pendingSeek != null) {
+      const maxTime = Number.isFinite(engine.duration)
+        ? Math.max(0, engine.duration - 0.05)
+        : pendingSeek;
+      engine.currentTime = Math.min(pendingSeek, maxTime);
+      pendingSeek = null;
+    }
     setDuration(engine.duration);
     paintSeek(duration ? engine.currentTime / duration : 0, engine.currentTime);
     renderBar();
