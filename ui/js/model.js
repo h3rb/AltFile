@@ -42,7 +42,7 @@ void main() {
   vec3 p = vec3(dot(aPos, uRight), dot(aPos, uUp), dot(aPos, uForward));
   vNormal = vec3(dot(aNormal, uRight), dot(aNormal, uUp), dot(aNormal, uForward));
   vDepth = p.z;
-  gl_Position = vec4(p.x * uScale.x, -p.y * uScale.y, p.z * uDepth, 1.0);
+  gl_Position = vec4(p.x * uScale.x, p.y * uScale.y, p.z * uDepth, 1.0);
 }`;
 
 const FRAGMENT_300 = `#version 300 es
@@ -75,7 +75,7 @@ void main() {
   vec3 p = vec3(dot(aPos, uRight), dot(aPos, uUp), dot(aPos, uForward));
   vNormal = vec3(dot(aNormal, uRight), dot(aNormal, uUp), dot(aNormal, uForward));
   vDepth = p.z;
-  gl_Position = vec4(p.x * uScale.x, -p.y * uScale.y, p.z * uDepth, 1.0);
+  gl_Position = vec4(p.x * uScale.x, p.y * uScale.y, p.z * uDepth, 1.0);
 }`;
 
 const FRAGMENT_100 = `precision mediump float;

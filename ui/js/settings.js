@@ -131,7 +131,7 @@ function settingsHtml() {
 
     <div class="settings-group">
       <div class="settings-group-title">About</div>
-      <div class="about-line"><span>Alt File Explorer</span><strong>v${esc(appInfo.version || '0.2.0')}</strong></div>
+      <div class="about-line"><span>Alt File Explorer</span><strong>v${esc(appInfo.version || '0.2.1')}</strong></div>
       <div class="about-line"><span>Platform</span><strong>${esc(appInfo.platform || 'unknown')}</strong></div>
       <div class="about-line"><span>Build</span><strong>Tauri 2 · Rust · system WebView</strong></div>
       <div class="about-line"><span>Mode</span><strong>${appInfo.portable ? 'Portable' : 'Installed'}</strong></div>

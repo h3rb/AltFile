@@ -1,6 +1,6 @@
 [package]
 name = "altfileexplorer"
-version = "0.2.0"
+version = "0.2.1"
 description = "A fast, dark, keyboard-first file explorer with smart thumbnails and a folder treemap"
 authors = ["h3rb"]
 license = "MIT"
