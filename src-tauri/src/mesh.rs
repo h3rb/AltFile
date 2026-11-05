@@ -968,7 +968,10 @@ pub fn mesh_bounds(path: String) -> Result<Option<MeshBounds>, String> {
     Ok(measure(&ext, &bytes))
 }
 
-const MAX_PREVIEW_FACETS: usize = 150_000;
+// Stride sampling cannot keep a closed surface watertight, so it must stay a last resort:
+// half the triangles of a dense mesh drop out and the dark inner shell shows through the
+// sub-pixel gaps. The budget covers full binary STLs well past 40 MB.
+const MAX_PREVIEW_FACETS: usize = 1_000_000;
 
 /// Triangle corners as packed little-endian f32 triplets, sampled evenly when the mesh
 /// exceeds the preview budget so the whole object stays recognizable.

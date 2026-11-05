@@ -1174,7 +1174,7 @@ async function boot() {
   try {
     state.app = await api.appInfo();
   } catch {
-    state.app = { home: '/', sep: '/', platform: 'unknown', portable: false, version: '0.2.1', dataDir: '', cacheDir: '' };
+    state.app = { home: '/', sep: '/', platform: 'unknown', portable: false, version: '0.2.2', dataDir: '', cacheDir: '' };
   }
   try {
     state.places = await api.listPlaces();

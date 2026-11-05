@@ -4,9 +4,11 @@ import { kindIcon } from './icons.js';
 
 const FONT_EXTS = new Set(['ttf', 'otf', 'woff', 'woff2']);
 const SPECIMEN = [
-  'Aa', 'Bb', 'Cc', 'Dd', 'Ee', 'Ff', 'Gg', 'Hh', 'Ii', 'Jj', 'Kk', 'Ll', 'Mm',
-  'Nn', 'Oo', 'Pp', 'Qq', 'Rr', 'Ss', 'Tt', 'Uu', 'Vv', 'Ww', 'Xx', 'Yy', 'Zz',
-  '01234',
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  'abcdefghijklmnopqrstuvwxyz',
+  '0123456789',
+  '!@#$%^&*()_+-=',
+  `[]{};:'",.<>/?\\|\`~`,
 ];
 
 const MAX_ACTIVE = 2;
@@ -18,7 +20,7 @@ let active = 0;
 let seq = 0;
 let observer = null;
 
-const specimenHtml = SPECIMEN.map((token) => `<span class="spec-token">${token}</span>`).join('');
+const specimenHtml = SPECIMEN.map((line) => `<span class="spec-line">${esc(line)}</span>`).join('');
 
 export function isFontEntry(entry) {
   return !!entry && !entry.isDir && FONT_EXTS.has((entry.ext || '').toLowerCase());

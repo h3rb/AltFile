@@ -222,7 +222,6 @@ export const KIND_LABELS = {
 };
 
 export const KIND_COLORS = {
-  folder: '#5eead4',
   image: '#2dd4bf',
   video: '#818cf8',
   audio: '#e879f9',
@@ -244,7 +243,39 @@ export function kindLabel(kind, ext = '') {
 }
 
 export function kindColor(kind) {
+  if (kind === 'folder') return themeColor();
   return KIND_COLORS[kind] || KIND_COLORS.file;
+}
+
+export const DEFAULT_HUE = 170.5714;
+const ACCENT_SATURATION = 0.7692308;
+const ACCENT_LIGHTNESS = 0.6431373;
+
+let accentChannels = '94, 234, 212';
+
+export function applyThemeHue(hue) {
+  const value = Number.isFinite(hue) ? hue : DEFAULT_HUE;
+  // Keep the untouched default position byte-identical to the original accent.
+  const degrees = Math.round(value) === Math.round(DEFAULT_HUE) ? DEFAULT_HUE : value;
+  const c = (1 - Math.abs(2 * ACCENT_LIGHTNESS - 1)) * ACCENT_SATURATION;
+  const sector = ((((degrees % 360) + 360) % 360) / 60);
+  const x = c * (1 - Math.abs((sector % 2) - 1));
+  const m = ACCENT_LIGHTNESS - c / 2;
+  let rgb;
+  if (sector < 1) rgb = [c, x, 0];
+  else if (sector < 2) rgb = [x, c, 0];
+  else if (sector < 3) rgb = [0, c, x];
+  else if (sector < 4) rgb = [0, x, c];
+  else if (sector < 5) rgb = [x, 0, c];
+  else rgb = [c, 0, x];
+  accentChannels = rgb
+    .map((channel) => Math.max(0, Math.min(255, Math.round((channel + m) * 255))))
+    .join(', ');
+  document.documentElement.style.setProperty('--accent-rgb', accentChannels);
+}
+
+export function themeColor(alpha = 1) {
+  return alpha >= 1 ? `rgb(${accentChannels})` : `rgba(${accentChannels}, ${alpha})`;
 }
 
 const TEXT_EXTS = new Set([

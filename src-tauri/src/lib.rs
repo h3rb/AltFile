@@ -4,6 +4,7 @@ mod fsops;
 mod media;
 mod mesh;
 mod network;
+mod pages;
 mod paths;
 mod render;
 mod search;
@@ -120,9 +121,11 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_drag::init())
         .register_uri_scheme_protocol("thumb", serve_thumbnail)
         .register_uri_scheme_protocol("media", media::serve)
         .register_uri_scheme_protocol("font", fonts::serve)
+        .register_uri_scheme_protocol("page", pages::serve)
         .setup(|app| {
             let portable = portable_root();
             let data_dir = match &portable {

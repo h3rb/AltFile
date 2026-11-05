@@ -7,6 +7,8 @@ treemap visualization of any folder — and it builds as a portable executable f
 ## Features
 
 - **Dark UI** with grid and list views, tabs, breadcrumbs, sidebar places, bookmarks, and a details pane.
+  The accent hue is adjustable in **Settings → Appearance → Theme**; every accent-tinted surface follows the
+  slider, while the default position keeps the original teal exactly.
 - **Network shares** appear in a `Network` group under *This PC* on Windows: the sidebar asks both the
   network browse list and the shell Network folder, so it finds machines the other source misses (and
   shares the browse list shows but the shell hides). Entries open the UNC path like any other folder, and
@@ -17,6 +19,9 @@ treemap visualization of any folder — and it builds as a portable executable f
   - Both: **3D model renders** for `.stl`, `.obj`, `.ply` and `.3mf` — the mesh is parsed and shaded by a small
     built-in software renderer (no shell handler, no GPU), so a model card shows the object itself from a
     three-quarter view instead of a generic icon.
+- **Drag files out**: drag any card or list row into another application. Selection is honored (drag a
+  selected item to move the whole selection) and the drop carries real files through the native OS drag, so
+  apps and file managers receive the files themselves.
 - **Shortcuts**: `.lnk` files are labeled *Shortcut* everywhere (cards, list, Details) and show a link badge over
   their grid thumbnail, while the thumbnail itself comes from the shell so it reflects the shortcut's target.
 - **Animated GIFs**: GIF cards and the preview pane show a still first-frame thumbnail, then play the original
@@ -29,26 +34,33 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **Folder content size**: the same tile shows the recursive size of the folder, and list view replaces the `—`
   in the size column with it. Sizes walk the tree lazily for visible rows with a time/entry budget, so a partial
   total is suffixed with `+` instead of blocking the view.
-- **Font specimens**: `.ttf`, `.otf`, `.woff` and `.woff2` cards and the preview pane render `AaBbCc…Zz01234`
-  in the actual typeface, loaded lazily for visible tiles through the `font://` protocol.
+- **Font specimens**: `.ttf`, `.otf`, `.woff` and `.woff2` cards and the preview pane render the full ASCII
+  sweep — `A–Z`, `a–z`, `0–9` and punctuation — in the actual typeface, loaded lazily for visible tiles through
+  the `font://` protocol.
 - **Archive contents**: ZIP, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, GZ, BZ2 and RAR (4 and 5) cards list the first
   entries, the archive format, file/folder counts, and a best-guess content type (Application, Source Code,
   Media Files, Documents, Fonts, 3D Models, Archives, or Mixed Files). ZIP indexes are read from the central
   directory without decompressing entry data; compressed tar streams are scanned with a 256 MB budget, and a
   partial result is marked with `+`. The preview pane shows the same contents list with total uncompressed size.
+- **HTML thumbnails**: `.html` and `.htm` cards render the page itself in a live, sandboxed frame (scripts,
+  forms and navigation disabled) served through the `page://` protocol, so relative stylesheets, images and
+  fonts load from the file's own folder. Only visible cards mount a frame, and a bounded pool is recycled as
+  you scroll.
 - **Treemap visualization** for the active folder: squarified tiles, drill-down, hover tooltip, large-file and
   extension/contents insights, hidden-file support, and cancellable scans. Folder tiles show their immediate
   children nested inside so a folder's makeup is visible without drilling in.
 - **Preview pane** with media thumbnails, file metadata, image dimensions, and text previews (UTF-8/UTF-16).
   Model files that the software renderer understands (`.stl`, `.obj`, `.ply`, `.3mf`) open in a slowly rotating
-  WebGL view instead of a static poster, so the shape can be inspected without leaving the app.
+  WebGL view instead of a static poster, so the shape can be inspected without leaving the app. Rotation can
+  be turned off in **Settings → Appearance → Rotate 3D models**, which freezes the current three-quarter view.
 - **Media previews and playlist**: audio waveforms with duration, bitrate, sample rate, and channels
   (click the waveform to start playback at that point); video frame previews with hover scrubbing over
   the timeline; and a persistent player with a queue you can fill from the preview pane, context menu,
   or command palette (`Space` toggles playback). When the file open in the preview is playing, the
   preview's own video follows the player — starting, pausing, and staying in sync — and scrubbing the
   preview timeline seeks the player. While audio plays, the shading on grid thumbnails pulses subtly to
-  the beat (Web Audio analyser; disabled when the system asks for reduced motion). The ad hoc queue can be
+  the beat (Web Audio analyser; disabled when the system asks for reduced motion), and the playing file's
+  card shows a live spectrum/oscilloscope overlay fed by the same analyser. The ad hoc queue can be
   saved as a named playlist (`Save` in the playlist panel) into a new name or an existing saved playlist;
   `Open` reopens saved playlists, adds them to the current queue, or deletes them.
 - **Search** the current folder instantly, or recurse into subfolders with gitignore-aware walking. Which of
@@ -170,6 +182,8 @@ the executable at compile time.
   threads with a time budget, because a machine that is offline can stall either call for minutes.
 - `src-tauri/src/fonts.rs` — streams `.ttf`/`.otf`/`.woff`/`.woff2` bytes with the right media type over the
   `font://` / `http://font.localhost` protocol so the UI can register them as live `FontFace` specimens.
+- `src-tauri/src/pages.rs` — serves an HTML file and its sibling assets (CSS, images, fonts, media) over the
+  `page://` / `http://page.localhost` protocol so grid cards can render the page in a sandboxed frame.
 - `src-tauri/src/settings.rs` — atomic JSON settings/session storage.
 - `src-tauri/src/mesh.rs` — mesh parsing for OBJ, STL (ASCII and binary), PLY (ASCII and binary), 3MF
   (its own ZIP + XML reader) and glTF/GLB/OFF: flat triangle lists for the renderer, bounding-box extents
@@ -180,8 +194,9 @@ the executable at compile time.
   ZIP central directory (including Zip64), TAR block headers, gzip/bzip2-decompressed tar streams, plain
   gzip/bzip2, and RAR 4/5 block walks. It also votes on a content type from entry extensions.
 - `ui/js/` — the application: `files.js` (rendering, selection, lazy thumbnails), `fonts.js` (font specimens),
-  `details.js` (the smart Details column), `model.js` (rotating WebGL model preview), `viz.js` (treemap),
-  `preview.js`, `ops.js`, `palette.js`, `settings.js`, and `main.js` (navigation, tabs, shortcuts).
+  `pages.js` (live sandboxed HTML card thumbnails), `details.js` (the smart Details column), `model.js`
+  (rotating WebGL model preview), `viz.js` (treemap), `preview.js`, `ops.js`, `palette.js`, `settings.js`,
+  and `main.js` (navigation, tabs, shortcuts).
 
 Data locations:
 

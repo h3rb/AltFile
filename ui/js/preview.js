@@ -15,6 +15,7 @@ import {
   fmtDuration,
   kindLabel,
   kindColor,
+  themeColor,
   isTextEntry,
   clamp,
   debounce,
@@ -50,7 +51,7 @@ function setMetaField(root, field, value) {
 
 function kindTile(entry, size = 46) {
   const color = kindColor(entry.kind);
-  return `<div class="kind-tile" style="--kind-color:${color};--kind-glow:rgba(94, 234, 212, 0.06);min-height:150px">${kindIcon(entry.kind, size)}</div>`;
+  return `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${themeColor(0.06)};min-height:150px">${kindIcon(entry.kind, size)}</div>`;
 }
 
 function actionsHtml(entry, info) {
@@ -140,7 +141,7 @@ function modelMediaHtml(entry, info, thumb) {
   return `
     <div class="preview-media model-preview">
       ${poster}
-      <canvas class="model-canvas" aria-label="Rotating 3D model"></canvas>
+      <canvas class="model-canvas" aria-label="3D model preview"></canvas>
       <span class="thumb-badge">${icon('cube', 9)} ${esc(badge)}</span>
     </div>`;
 }
@@ -345,8 +346,8 @@ function drawWaveform(canvas, peaks) {
   const slot = width / peaks.length;
   const bar = Math.max(1, slot * 0.62);
   const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, 'rgba(94, 234, 212, 0.92)');
-  gradient.addColorStop(0.5, 'rgba(94, 234, 212, 0.72)');
+  gradient.addColorStop(0, themeColor(0.92));
+  gradient.addColorStop(0.5, themeColor(0.72));
   gradient.addColorStop(1, 'rgba(124, 156, 255, 0.8)');
   ctx.fillStyle = gradient;
   for (let i = 0; i < peaks.length; i += 1) {

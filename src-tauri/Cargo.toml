@@ -1,6 +1,6 @@
 [package]
 name = "altfileexplorer"
-version = "0.2.1"
+version = "0.2.2"
 description = "A fast, dark, keyboard-first file explorer with smart thumbnails and a folder treemap"
 authors = ["h3rb"]
 license = "MIT"
@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-drag = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

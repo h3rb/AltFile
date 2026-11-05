@@ -9,6 +9,7 @@ import {
   basename,
   kindLabel,
   kindColor,
+  themeColor,
 } from './util.js';
 import { showMenu } from './dialogs.js';
 import { systemMenuItem } from './systemmenu.js';
@@ -737,7 +738,7 @@ function paint() {
     trace();
     ctx.lineWidth = selected ? 2 : hovered ? 1.4 : 1;
     ctx.strokeStyle = selected
-      ? toRgba('#5eead4', 0.95)
+      ? themeColor(0.95)
       : hovered
         ? 'rgba(255, 255, 255, 0.6)'
         : toRgba(color, 0.42);

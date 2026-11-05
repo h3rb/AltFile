@@ -19,6 +19,13 @@ export function fontUrl(path, mtime = 0) {
   return mtime ? `${base}?m=${mtime}` : base;
 }
 
+export function pageUrl(path, mtime = 0) {
+  const normalized = String(path || '').replace(/\\/g, '/');
+  const encoded = normalized.split('/').map((part) => encodeURIComponent(part)).join('/');
+  const base = IS_WINDOWS ? `http://page.localhost/${encoded}` : `page://localhost/${encoded}`;
+  return mtime ? `${base}?m=${mtime}` : base;
+}
+
 function invoke(cmd, args) {
   if (!tauri?.core?.invoke) {
     return Promise.reject(new Error('Tauri bridge unavailable'));

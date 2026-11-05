@@ -1,7 +1,7 @@
 import { api, mediaUrl } from './api.js';
 import { state, scheduleSave, mediaKindOf } from './state.js';
 import { icon } from './icons.js';
-import { esc, basename, dirname, clamp, fmtDuration, uid } from './util.js';
+import { esc, basename, dirname, clamp, fmtDuration, themeColor, uid } from './util.js';
 import { toast, showMenu, promptDialog, confirmDialog } from './dialogs.js';
 
 const AUDIO = 'audio';
@@ -24,6 +24,11 @@ let beatLevel = 0;
 let beatAvg = 0;
 let lastBeatAt = 0;
 let pulseFrame = 0;
+let timeData = null;
+let scopeCanvas = null;
+let scopeCtx = null;
+let scopePath = null;
+let scopeTriedAt = 0;
 const playbackListeners = new Set();
 
 function current() {
@@ -70,6 +75,7 @@ function ensureAnalyser() {
     analyser.fftSize = 512;
     analyser.smoothingTimeConstant = 0.45;
     freqData = new Uint8Array(analyser.frequencyBinCount);
+    timeData = new Uint8Array(analyser.fftSize);
     source.connect(analyser);
     analyser.connect(audioCtx.destination);
     return true;
@@ -90,6 +96,78 @@ function stopPulse() {
   beatAvg = 0;
   lastBeatAt = 0;
   setBeat(0);
+  detachScope();
+}
+
+function detachScope() {
+  scopeCanvas?.remove();
+  scopeCanvas = null;
+  scopeCtx = null;
+  scopePath = null;
+}
+
+function mountScope() {
+  const item = current();
+  if (!item || item.kind !== AUDIO) return false;
+  if (scopeCanvas && scopePath === item.path && scopeCanvas.isConnected) return true;
+  detachScope();
+  const now = performance.now();
+  if (now - scopeTriedAt < 400) return false;
+  scopeTriedAt = now;
+  const thumb = [...document.querySelectorAll('.files-grid .file-card')]
+    .find((card) => samePath(card.getAttribute('data-path') || '', item.path))
+    ?.querySelector('.card-thumb');
+  if (!thumb) return false;
+  const canvas = document.createElement('canvas');
+  canvas.className = 'card-scope';
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  thumb.append(canvas);
+  scopeCanvas = canvas;
+  scopeCtx = ctx;
+  scopePath = item.path;
+  return true;
+}
+
+function drawScope() {
+  if (!analyser || !freqData || !timeData || !mountScope()) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(1, Math.round(scopeCanvas.clientWidth * dpr));
+  const height = Math.max(1, Math.round(scopeCanvas.clientHeight * dpr));
+  if (scopeCanvas.width !== width || scopeCanvas.height !== height) {
+    scopeCanvas.width = width;
+    scopeCanvas.height = height;
+  }
+  const ctx = scopeCtx;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = 'rgba(6, 10, 14, 0.78)';
+  ctx.fillRect(0, 0, width, height);
+
+  const bars = Math.max(16, Math.round(width / (7 * dpr)));
+  const maxBin = Math.floor(freqData.length * 0.62);
+  const slot = width / bars;
+  for (let i = 0; i < bars; i += 1) {
+    const t = (i + 0.5) / bars;
+    const bin = Math.max(1, Math.min(maxBin, Math.round(t * t * maxBin)));
+    const value = freqData[bin] / 255;
+    const barHeight = Math.max(1, value * height * 0.74);
+    ctx.fillStyle = themeColor(0.18 + value * 0.62);
+    ctx.fillRect(i * slot + slot * 0.2, height - barHeight, slot * 0.6, barHeight);
+  }
+
+  analyser.getByteTimeDomainData(timeData);
+  const points = Math.min(160, Math.round(width / 2));
+  ctx.beginPath();
+  for (let i = 0; i <= points; i += 1) {
+    const sample = timeData[Math.floor((i / points) * (timeData.length - 1))];
+    const x = (i / points) * width;
+    const y = height / 2 + ((sample - 128) / 128) * height * 0.36;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.lineWidth = Math.max(1, dpr);
+  ctx.strokeStyle = 'rgba(226, 255, 250, 0.86)';
+  ctx.stroke();
 }
 
 export function startPulse() {
@@ -119,6 +197,7 @@ export function startPulse() {
     beatAvg += (energy - beatAvg) * 0.07;
     setBeat(beatLevel);
     beatLevel *= 0.9;
+    drawScope();
     pulseFrame = requestAnimationFrame(tick);
   };
   pulseFrame = requestAnimationFrame(tick);

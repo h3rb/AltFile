@@ -276,6 +276,43 @@ export function stopModelPreview() {
   }
 }
 
+function prefersReducedMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+}
+
+function stopSpin(model) {
+  if (model.raf) cancelAnimationFrame(model.raf);
+  model.raf = 0;
+}
+
+function startSpin(model) {
+  if (model.raf || state.modelSpin === false || prefersReducedMotion()) return;
+  const started = performance.now() - (model.angle / SPEED) * 1000;
+  const tick = (now) => {
+    if (active !== model || !model.canvas.isConnected) return;
+    model.raf = requestAnimationFrame(tick);
+    if (now - model.last < FRAME_MS) return;
+    model.last = now;
+    if (!model.canvas.clientWidth) return;
+    fitCanvas(model.canvas);
+    model.angle = ((now - started) / 1000) * SPEED;
+    draw(model, model.angle);
+  };
+  model.raf = requestAnimationFrame(tick);
+}
+
+export function setModelSpin(enabled) {
+  state.modelSpin = enabled !== false;
+  if (!active) return;
+  if (state.modelSpin) {
+    startSpin(active);
+  } else {
+    stopSpin(active);
+    active.angle = 0;
+    draw(active, 0);
+  }
+}
+
 export async function wireModelPreview(entry, body, token) {
   const holder = body.querySelector('.model-preview');
   const canvas = holder?.querySelector('.model-canvas');
@@ -312,22 +349,11 @@ export async function wireModelPreview(entry, body, token) {
     radius: geometry.radius,
     raf: 0,
     last: 0,
+    angle: 0,
   };
   active = model;
   fitCanvas(canvas);
   draw(model, 0);
   holder.classList.add('model-ready');
-
-  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-  const started = performance.now();
-  const tick = (now) => {
-    if (active !== model || !canvas.isConnected) return;
-    model.raf = requestAnimationFrame(tick);
-    if (now - model.last < FRAME_MS) return;
-    model.last = now;
-    if (!canvas.clientWidth) return;
-    fitCanvas(canvas);
-    draw(model, ((now - started) / 1000) * SPEED);
-  };
-  model.raf = requestAnimationFrame(tick);
+  startSpin(model);
 }

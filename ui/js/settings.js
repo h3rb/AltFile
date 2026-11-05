@@ -2,8 +2,10 @@ import { api } from './api.js';
 import { state, activeTab, app, scheduleSave } from './state.js';
 import { openModal, confirmDialog, toast } from './dialogs.js';
 import { icon } from './icons.js';
-import { esc, humanSize, humanCount, clamp, debounce } from './util.js';
+import { applyThemeHue, esc, humanSize, humanCount, clamp, debounce } from './util.js';
 import { renderFiles } from './files.js';
+import { setModelSpin } from './model.js';
+import { renderViz } from './viz.js';
 
 const SHORTCUTS = [
   ['Ctrl', 'K', 'Command palette'],
@@ -27,6 +29,9 @@ const SHORTCUTS = [
 ];
 
 const rerender = debounce(() => renderFiles(), 220);
+const rerenderViz = debounce(() => {
+  if (activeTab()?.view === 'viz') renderViz();
+}, 220);
 
 function settingsHtml() {
   const tab = activeTab();
@@ -37,9 +42,12 @@ function settingsHtml() {
       <div class="setting-row">
         <div class="setting-main">
           <div class="setting-label">Theme</div>
-          <div class="setting-desc">Dark mode is the default and only theme in this build.</div>
+          <div class="setting-desc">Pick the hue for the accent color. Dark mode is the default and only theme in this build.</div>
         </div>
-        <div class="setting-control"><span class="nav-meta">Dark</span></div>
+        <div class="setting-control">
+          <input class="range hue-range" id="settings-hue" type="range" min="0" max="360" step="1" value="${Math.round(state.themeHue)}">
+          <span id="settings-hue-value" class="nav-meta">${Math.round(state.themeHue)}°</span>
+        </div>
       </div>
       <div class="setting-row">
         <div class="setting-main">
@@ -58,6 +66,15 @@ function settingsHtml() {
         </div>
         <div class="setting-control">
           <input type="checkbox" id="settings-preview"${state.preview.open ? ' checked' : ''}>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-main">
+          <div class="setting-label">Rotate 3D models</div>
+          <div class="setting-desc">Spin STL, OBJ, PLY and 3MF previews in the preview panel. Turn off to keep a static three-quarter view.</div>
+        </div>
+        <div class="setting-control">
+          <input type="checkbox" id="settings-model-spin"${state.modelSpin ? ' checked' : ''}>
         </div>
       </div>
     </div>
@@ -131,7 +148,7 @@ function settingsHtml() {
 
     <div class="settings-group">
       <div class="settings-group-title">About</div>
-      <div class="about-line"><span>Alt File Explorer</span><strong>v${esc(appInfo.version || '0.2.1')}</strong></div>
+      <div class="about-line"><span>Alt File Explorer</span><strong>v${esc(appInfo.version || '0.2.2')}</strong></div>
       <div class="about-line"><span>Platform</span><strong>${esc(appInfo.platform || 'unknown')}</strong></div>
       <div class="about-line"><span>Build</span><strong>Tauri 2 · Rust · system WebView</strong></div>
       <div class="about-line"><span>Mode</span><strong>${appInfo.portable ? 'Portable' : 'Installed'}</strong></div>
@@ -168,6 +185,18 @@ export function openSettings() {
     actions: [{ label: 'Done', kind: 'primary' }],
   });
 
+  const hueRange = body.querySelector('#settings-hue');
+  const hueValue = body.querySelector('#settings-hue-value');
+  hueRange?.addEventListener('input', () => {
+    const hue = clamp(Math.round(Number(hueRange.value) || 0), 0, 360);
+    state.themeHue = hue;
+    if (hueValue) hueValue.textContent = `${hue}°`;
+    applyThemeHue(hue);
+    scheduleSave();
+    rerender();
+    rerenderViz();
+  });
+
   const range = body.querySelector('#settings-thumb-size');
   const thumbValue = body.querySelector('#settings-thumb-value');
   range?.addEventListener('input', () => {
@@ -197,6 +226,11 @@ export function openSettings() {
     state.preview.open = event.target.checked;
     scheduleSave();
     app.setPreviewOpen?.(event.target.checked);
+  });
+
+  body.querySelector('#settings-model-spin')?.addEventListener('change', (event) => {
+    scheduleSave();
+    setModelSpin(event.target.checked);
   });
 
   body.querySelector('#settings-hidden')?.addEventListener('change', (event) => {

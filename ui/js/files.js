@@ -2,6 +2,7 @@ import { api, gifUrl, mediaUrl } from './api.js';
 import { state, activeTab, app, scheduleSave } from './state.js';
 import { icon, kindIcon } from './icons.js';
 import { fontTileHtml, observeFontTiles } from './fonts.js';
+import { pageTileHtml, observePageTiles } from './pages.js';
 import { detailCellHtml, observeDetails } from './details.js';
 import {
   esc,
@@ -92,9 +93,14 @@ function thumbRequestSize() {
   return Math.min(512, Math.max(192, Math.ceil((state.thumbSize * dpr) / 64) * 64));
 }
 
-function rgba(hex, alpha) {
-  const value = (hex || '#94a3b8').replace('#', '');
-  const full = value.length === 3 ? value.split('').map((c) => c + c).join('') : value;
+function rgba(color, alpha) {
+  const value = String(color || '#94a3b8');
+  if (/^rgba?\(/.test(value.trim())) {
+    const [r, g, b] = value.replace(/^rgba?\(|\)$/g, '').split(',').map((part) => part.trim());
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  const hex = value.replace('#', '');
+  const full = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex;
   const r = parseInt(full.slice(0, 2), 16) || 148;
   const g = parseInt(full.slice(2, 4), 16) || 163;
   const b = parseInt(full.slice(4, 6), 16) || 184;
@@ -350,7 +356,7 @@ function cardHtml(entry, index) {
   const hoverVideo = !entry.isDir && entry.kind === 'video';
   const thumbBody = entry.isDir
     ? folderTileHtml(entry)
-    : `${archiveTileHtml(entry) || fontTileHtml(entry) || `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>`}
+    : `${archiveTileHtml(entry) || fontTileHtml(entry) || pageTileHtml(entry) || `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>`}
         ${thumb ? '<img alt="" decoding="async" draggable="false">' : ''}`;
   return `
     <article class="${classes.join(' ')}" data-path="${esc(entry.path)}" data-index="${index}" title="${esc(entry.path)}">
@@ -578,6 +584,7 @@ export function renderFiles() {
   observeCounts();
   observeArchives();
   observeFontTiles();
+  observePageTiles();
   observeSizes();
   observeDetails();
   paintSelection();
@@ -1145,6 +1152,113 @@ function clickedIndex(el) {
   return Number.isFinite(index) ? index : -1;
 }
 
+const DRAG_THRESHOLD = 6;
+let dragCandidate = null;
+let dragBusy = false;
+
+function entryForElement(el) {
+  const path = el?.dataset?.path;
+  if (!path) return null;
+  return state.visibleEntries.find((entry) => entry.path === path) || null;
+}
+
+function dragChannel() {
+  const core = globalThis.__TAURI__?.core;
+  if (core?.Channel) return new core.Channel();
+  const internals = globalThis.__TAURI_INTERNALS__;
+  if (!internals?.transformCallback) return null;
+  const id = internals.transformCallback(() => {}, false);
+  return {
+    __TAURI_CHANNEL_MARKER__: true,
+    id,
+    toJSON: () => `__CHANNEL__:${id}`,
+  };
+}
+
+async function dragPreview(entry) {
+  const size = 96;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const color = kindColor(entry.kind);
+  ctx.fillStyle = 'rgba(13, 18, 25, 0.95)';
+  ctx.beginPath();
+  ctx.roundRect(4, 4, size - 8, size - 8, 18);
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.5;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  const svg = kindIcon(entry.kind, 48).replaceAll('currentColor', color);
+  const image = new Image();
+  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  try {
+    await image.decode();
+    ctx.drawImage(image, 24, 24, 48, 48);
+  } catch {
+    // The plain plate still works if the glyph cannot be rasterised.
+  }
+  return canvas.toDataURL('image/png');
+}
+
+async function beginDrag(el) {
+  const entry = entryForElement(el);
+  if (!entry) return;
+  if (!state.selection.has(entry.path)) {
+    state.selection = new Set([entry.path]);
+    state.focusIndex = state.visibleEntries.indexOf(entry);
+    state.anchorIndex = state.focusIndex;
+    updateSelectionUI();
+  }
+  const invoke = globalThis.__TAURI__?.core?.invoke;
+  const onEvent = dragChannel();
+  if (!invoke || !onEvent || dragBusy) return;
+  dragBusy = true;
+  try {
+    const image = await dragPreview(entry);
+    if (!image) return;
+    await invoke('plugin:drag|start_drag', {
+      item: selectedEntries().map((item) => item.path),
+      image,
+      options: { mode: 'copy' },
+      onEvent,
+    });
+  } catch (error) {
+    console.warn('File drag failed:', error);
+  } finally {
+    dragBusy = false;
+  }
+}
+
+function onPointerDown(event) {
+  if (event.button !== 0 || !event.isPrimary || dragBusy) return;
+  if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const el = event.target.closest('[data-path]');
+  if (!el || !scrollEl()?.contains(el)) return;
+  dragCandidate = { el, x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+}
+
+function onPointerMove(event) {
+  if (!dragCandidate || event.pointerId !== dragCandidate.pointerId) return;
+  if ((event.buttons & 1) === 0) {
+    dragCandidate = null;
+    return;
+  }
+  const dx = event.clientX - dragCandidate.x;
+  const dy = event.clientY - dragCandidate.y;
+  if (dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
+  const target = dragCandidate.el;
+  dragCandidate = null;
+  beginDrag(target);
+}
+
+function onPointerUp(event) {
+  if (dragCandidate && event.pointerId === dragCandidate.pointerId) dragCandidate = null;
+}
+
 function onClick(event) {
   const scroll = scrollEl();
   if (!scroll) return;
@@ -1241,6 +1355,13 @@ export function initFiles() {
   scroll?.addEventListener('click', onClick);
   scroll?.addEventListener('dblclick', onDoubleClick);
   scroll?.addEventListener('contextmenu', onContextMenu);
+  scroll?.addEventListener('pointerdown', onPointerDown);
+  window.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+  window.addEventListener('pointercancel', onPointerUp);
+  scroll?.addEventListener('dragstart', (event) => {
+    if (event.target.closest('[data-path]')) event.preventDefault();
+  });
   scroll?.addEventListener('mouseover', onCardGifOver);
   scroll?.addEventListener('mouseout', onCardGifOut);
   scroll?.addEventListener('mouseover', onCardVideoOver);

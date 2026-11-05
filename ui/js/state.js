@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { basename, clamp, uid } from './util.js';
+import { applyThemeHue, basename, clamp, DEFAULT_HUE, uid } from './util.js';
 
 export const state = {
   app: null,
@@ -23,6 +23,8 @@ export const state = {
   thumbSize: 176,
   vizDepth: 64,
   searchRecursive: false,
+  modelSpin: true,
+  themeHue: DEFAULT_HUE,
   clipboard: { paths: [], cut: false },
   preview: { open: true, token: 0 },
   media: {
@@ -145,6 +147,10 @@ export async function loadSession() {
     }
     state.preview.open = saved.previewOpen !== false;
     state.searchRecursive = saved.searchRecursive === true;
+    state.modelSpin = saved.modelSpin !== false;
+    if (Number.isFinite(saved.themeHue)) {
+      state.themeHue = ((saved.themeHue % 360) + 360) % 360;
+    }
     restoreMedia(saved);
 
     if (Array.isArray(saved.playlists)) {
@@ -187,6 +193,8 @@ export async function loadSession() {
     state.tabs = [tab];
     state.activeId = tab.id;
   }
+
+  applyThemeHue(state.themeHue);
 }
 
 export function captureSession() {
@@ -205,6 +213,8 @@ export function captureSession() {
     thumbSize: state.thumbSize,
     vizDepth: state.vizDepth,
     searchRecursive: state.searchRecursive,
+    modelSpin: state.modelSpin,
+    themeHue: state.themeHue,
     previewOpen: state.preview.open,
     mediaQueue: state.media.queue
       .slice(0, 200)
