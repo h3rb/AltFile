@@ -4,6 +4,7 @@ import { basename, clamp, uid } from './util.js';
 export const state = {
   app: null,
   places: [],
+  network: null,
   tabs: [],
   activeId: null,
   listing: null,
@@ -21,6 +22,7 @@ export const state = {
   recent: [],
   thumbSize: 176,
   vizDepth: 64,
+  searchRecursive: false,
   clipboard: { paths: [], cut: false },
   preview: { open: true, token: 0 },
   media: {
@@ -30,6 +32,7 @@ export const state = {
     muted: false,
     playing: false,
   },
+  playlists: [],
   viz: {
     cache: new Map(),
     result: null,
@@ -59,7 +62,6 @@ export function createTab(path, extra = {}) {
     sort: extra.sort || { key: 'name', dir: 1 },
     filter: extra.filter || 'all',
     query: '',
-    recursive: Boolean(extra.recursive),
     showHidden: Boolean(extra.showHidden),
     scrollTop: 0,
   };
@@ -86,21 +88,20 @@ export function mediaKindOf(path, kind) {
   return null;
 }
 
+function normalizeMediaItem(item) {
+  if (!item || typeof item.path !== 'string' || !item.path) return null;
+  const kind = mediaKindOf(item.path, item.kind);
+  if (!kind) return null;
+  return {
+    path: item.path,
+    name: typeof item.name === 'string' && item.name ? item.name : basename(item.path),
+    kind,
+  };
+}
+
 function restoreMedia(saved) {
   if (Array.isArray(saved.mediaQueue)) {
-    state.media.queue = saved.mediaQueue
-      .filter((item) => item && typeof item.path === 'string' && item.path)
-      .slice(0, 500)
-      .map((item) => {
-        const kind = mediaKindOf(item.path, item.kind);
-        if (!kind) return null;
-        return {
-          path: item.path,
-          name: typeof item.name === 'string' && item.name ? item.name : basename(item.path),
-          kind,
-        };
-      })
-      .filter(Boolean);
+    state.media.queue = saved.mediaQueue.slice(0, 500).map(normalizeMediaItem).filter(Boolean);
   }
   if (Number.isFinite(saved.mediaIndex)) {
     state.media.index = clamp(Math.round(saved.mediaIndex), -1, state.media.queue.length - 1);
@@ -143,7 +144,26 @@ export async function loadSession() {
       state.vizDepth = clamp(Math.round(saved.vizDepth), 1, 255);
     }
     state.preview.open = saved.previewOpen !== false;
+    state.searchRecursive = saved.searchRecursive === true;
     restoreMedia(saved);
+
+    if (Array.isArray(saved.playlists)) {
+      const names = new Set();
+      for (const savedPlaylist of saved.playlists.slice(0, 40)) {
+        if (!savedPlaylist || typeof savedPlaylist.name !== 'string') continue;
+        const name = savedPlaylist.name.trim().slice(0, 80);
+        if (!name || names.has(name.toLowerCase())) continue;
+        names.add(name.toLowerCase());
+        state.playlists.push({
+          id: typeof savedPlaylist.id === 'string' && savedPlaylist.id ? savedPlaylist.id : uid(),
+          name,
+          items: Array.isArray(savedPlaylist.items)
+            ? savedPlaylist.items.slice(0, 500).map(normalizeMediaItem).filter(Boolean)
+            : [],
+          updatedAt: Number.isFinite(savedPlaylist.updatedAt) ? savedPlaylist.updatedAt : 0,
+        });
+      }
+    }
 
     if (Array.isArray(saved.tabs)) {
       for (const savedTab of saved.tabs) {
@@ -153,7 +173,6 @@ export async function loadSession() {
             view: savedTab.view,
             sort: normalizeSort(savedTab.sort),
             filter: typeof savedTab.filter === 'string' ? savedTab.filter : 'all',
-            recursive: Boolean(savedTab.recursive),
             showHidden: Boolean(savedTab.showHidden),
           })
         );
@@ -178,7 +197,6 @@ export function captureSession() {
       view: tab.view,
       sort: tab.sort,
       filter: tab.filter,
-      recursive: tab.recursive,
       showHidden: tab.showHidden,
     })),
     activeIndex: Math.max(0, state.tabs.findIndex((tab) => tab.id === state.activeId)),
@@ -186,6 +204,7 @@ export function captureSession() {
     recent: state.recent,
     thumbSize: state.thumbSize,
     vizDepth: state.vizDepth,
+    searchRecursive: state.searchRecursive,
     previewOpen: state.preview.open,
     mediaQueue: state.media.queue
       .slice(0, 200)
@@ -193,6 +212,12 @@ export function captureSession() {
     mediaIndex: state.media.index,
     mediaVolume: state.media.volume,
     mediaMuted: state.media.muted,
+    playlists: state.playlists.map((playlist) => ({
+      id: playlist.id,
+      name: playlist.name,
+      updatedAt: playlist.updatedAt,
+      items: playlist.items.map((item) => ({ path: item.path, name: item.name, kind: item.kind })),
+    })),
   };
 }
 

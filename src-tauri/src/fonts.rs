@@ -57,10 +57,7 @@ pub fn serve<R: tauri::Runtime>(
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CONTENT_LENGTH, meta.len().to_string())
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-        .header(
-            header::CACHE_CONTROL,
-            "public, max-age=31536000, immutable",
-        )
+        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
         .body(Cow::Owned(body))
         .expect("font response")
 }

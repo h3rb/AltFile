@@ -351,7 +351,14 @@ pub async fn viz_scan(
     let current_gen = state.scan_gen.clone();
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        scan(&app_handle, &root, include_hidden, max_depth, gen, current_gen)
+        scan(
+            &app_handle,
+            &root,
+            include_hidden,
+            max_depth,
+            gen,
+            current_gen,
+        )
     })
     .await
     .map_err(|e| format!("Scan task failed: {e}"))?

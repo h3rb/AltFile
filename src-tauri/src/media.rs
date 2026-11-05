@@ -29,6 +29,7 @@ fn mime_for(ext: &str) -> &'static str {
         "wma" => "audio/x-ms-wma",
         "mid" | "midi" => "audio/midi",
         "aiff" => "audio/aiff",
+        "gif" => "image/gif",
         _ => "application/octet-stream",
     }
 }
@@ -128,9 +129,15 @@ pub fn serve<R: tauri::Runtime>(
         .unwrap_or_default();
     let ext = paths::ext_of(&name);
     let kind = paths::classify(&ext, false);
-    if kind != "audio" && kind != "video" {
+    let gif = ext == "gif";
+    if kind != "audio" && kind != "video" && !gif {
         return empty(StatusCode::FORBIDDEN);
     }
+    let cache = if gif {
+        "public, max-age=3600"
+    } else {
+        "no-store"
+    };
 
     let total = meta.len();
     if total == 0 {
@@ -138,7 +145,7 @@ pub fn serve<R: tauri::Runtime>(
             .header(header::CONTENT_TYPE, mime_for(&ext))
             .header(header::CONTENT_LENGTH, "0")
             .header(header::ACCEPT_RANGES, "bytes")
-            .header(header::CACHE_CONTROL, "no-store")
+            .header(header::CACHE_CONTROL, cache)
             .body(Cow::Owned(Vec::new()))
             .expect("empty media response");
     }
@@ -193,12 +200,13 @@ pub fn serve<R: tauri::Runtime>(
     .header(header::CONTENT_TYPE, mime_for(&ext))
     .header(header::ACCEPT_RANGES, "bytes")
     .header(header::CONTENT_LENGTH, length.to_string())
-    .header(header::CACHE_CONTROL, "no-store");
+    .header(header::CACHE_CONTROL, cache);
     if partial {
-        builder = builder.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{total}"));
+        builder = builder.header(
+            header::CONTENT_RANGE,
+            format!("bytes {start}-{end}/{total}"),
+        );
     }
 
-    builder
-        .body(Cow::Owned(body))
-        .expect("media response")
+    builder.body(Cow::Owned(body)).expect("media response")
 }

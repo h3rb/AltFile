@@ -26,10 +26,10 @@ function activePath() {
   return activeTab()?.path || '';
 }
 
-function navItem({ path, name, meta = '', iconName = 'folder', active = false, removable = false, bookmarkId = '', meter = null }) {
+function navItem({ path, name, meta = '', iconName = 'folder', active = false, removable = false, bookmarkId = '', meter = null, title = '' }) {
   return `
     <div class="drive-wrap">
-      <button class="nav-item${active ? ' active' : ''}" type="button" data-path="${esc(path)}" title="${esc(path)}">
+      <button class="nav-item${active ? ' active' : ''}" type="button" data-path="${esc(path)}" title="${esc(title || path)}">
         ${icon(iconName, 15)}
         <span class="nav-name">${esc(name)}</span>
         ${meta ? `<span class="nav-meta">${esc(meta)}</span>` : ''}
@@ -39,10 +39,16 @@ function navItem({ path, name, meta = '', iconName = 'folder', active = false, r
     </div>`;
 }
 
+function shareHost(path) {
+  return String(path || '').replace(/^\\+/, '').split(/[\\/]/)[0] || '';
+}
+
 export function renderSidebar() {
   const quick = document.getElementById('quick-nav');
   const bookmarkList = document.getElementById('bookmark-list');
   const driveList = document.getElementById('drive-list');
+  const networkList = document.getElementById('network-list');
+  const rescanBtn = document.getElementById('rescan-network');
   const settingsBtn = document.getElementById('settings-btn');
   const addBtn = document.getElementById('add-bookmark');
   if (!quick || !bookmarkList || !driveList) return;
@@ -102,6 +108,32 @@ export function renderSidebar() {
         })
         .join('')
     : '<div class="nav-empty">No drives detected.</div>';
+
+  if (rescanBtn) rescanBtn.innerHTML = icon('refresh', 12);
+  const onWindows = state.app ? state.app.platform === 'windows' : true;
+  document.querySelector('.nav-heading.sub')?.toggleAttribute('hidden', !onWindows);
+  networkList?.toggleAttribute('hidden', !onWindows);
+  if (networkList && onWindows) {
+    const shares = state.network;
+    networkList.innerHTML =
+      shares === null
+        ? '<div class="nav-empty">Scanning the network…</div>'
+        : shares.length
+          ? shares
+              .map((share) => {
+                const host = shareHost(share.path);
+                return navItem({
+                  path: share.path,
+                  name: share.name,
+                  iconName: 'network',
+                  meta: share.kind === 'share' && host.toLowerCase() !== share.name.toLowerCase() ? host : '',
+                  title: share.comment ? `${share.path}\n${share.comment}` : share.path,
+                  active: samePath(share.path, current),
+                });
+              })
+              .join('')
+          : '<div class="nav-empty">No shared folders found.</div>';
+  }
 }
 
 export function addBookmark(path, name) {
@@ -154,7 +186,12 @@ function onListContextMenu(event) {
 }
 
 export function initSidebar() {
-  const roots = [document.getElementById('quick-nav'), document.getElementById('bookmark-list'), document.getElementById('drive-list')];
+  const roots = [
+    document.getElementById('quick-nav'),
+    document.getElementById('bookmark-list'),
+    document.getElementById('drive-list'),
+    document.getElementById('network-list'),
+  ];
   roots.forEach((root) => {
     root?.addEventListener('click', onListClick);
     root?.addEventListener('contextmenu', onListContextMenu);
@@ -162,5 +199,6 @@ export function initSidebar() {
 
   document.getElementById('settings-btn')?.addEventListener('click', () => app.openSettings?.());
   document.getElementById('add-bookmark')?.addEventListener('click', () => app.bookmarkCurrent?.());
+  document.getElementById('rescan-network')?.addEventListener('click', () => app.rescanNetwork?.());
   document.getElementById('palette-hint')?.addEventListener('click', () => app.openPalette?.());
 }

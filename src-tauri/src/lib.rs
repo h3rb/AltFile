@@ -1,7 +1,11 @@
-mod fsops;
+mod archive;
 mod fonts;
+mod fsops;
 mod media;
+mod mesh;
+mod network;
 mod paths;
+mod render;
 mod search;
 mod settings;
 mod shellmenu;
@@ -94,10 +98,7 @@ fn serve_thumbnail<R: tauri::Runtime>(
         Ok(bytes) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "image/jpeg")
-            .header(
-                header::CACHE_CONTROL,
-                "public, max-age=31536000, immutable",
-            )
+            .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .body(Cow::Owned(bytes))
             .expect("valid thumbnail response"),
@@ -162,11 +163,16 @@ pub fn run() {
             fsops::list_dir,
             fsops::folder_counts,
             fsops::folder_size,
+            archive::archive_summary,
             fsops::list_places,
+            network::network_places,
+            network::network_computers,
             fsops::open_path,
             fsops::reveal_path,
             fsops::copy_text,
             fsops::file_info,
+            mesh::mesh_bounds,
+            mesh::mesh_geometry,
             fsops::text_preview,
             fsops::copy_paths,
             fsops::delete_paths,

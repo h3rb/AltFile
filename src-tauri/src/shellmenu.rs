@@ -13,7 +13,7 @@ pub struct ShellMenuItem {
 }
 
 #[cfg(windows)]
-mod win {
+pub(crate) mod win {
     use super::ShellMenuItem;
     use windows::core::{HSTRING, PCSTR, PCWSTR, PWSTR};
     use windows::Win32::Foundation::{HWND, POINT};
@@ -21,8 +21,8 @@ mod win {
         CoInitializeEx, CoUninitialize, IBindCtx, COINIT_APARTMENTTHREADED,
     };
     use windows::Win32::UI::Shell::{
-        IContextMenu, IShellItem, SHCreateItemFromParsingName, BHID_SFUIObject,
-        CMINVOKECOMMANDINFO, CMINVOKECOMMANDINFOEX, CMF_NORMAL,
+        BHID_SFUIObject, IContextMenu, IShellItem, SHCreateItemFromParsingName, CMF_NORMAL,
+        CMINVOKECOMMANDINFO, CMINVOKECOMMANDINFOEX,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreatePopupMenu, DestroyMenu, GetMenuItemCount, GetMenuItemInfoW, HMENU, MENUITEMINFOW,
@@ -35,12 +35,16 @@ mod win {
     const MAX_DEPTH: u32 = 4;
     const CMIC_MASK_UNICODE: u32 = 0x0000_4000;
 
-    struct ComGuard(bool);
+    pub(crate) struct ComGuard(bool);
 
     impl ComGuard {
-        fn init() -> Self {
+        pub(crate) fn init() -> Self {
             let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
             ComGuard(hr.is_ok())
+        }
+
+        pub(crate) fn active(&self) -> bool {
+            self.0
         }
     }
 
@@ -64,17 +68,17 @@ mod win {
 
     fn context_menu(path: &str) -> Result<IContextMenu, String> {
         let native = path.replace('/', "\\");
-        let item: IShellItem = unsafe {
-            SHCreateItemFromParsingName(&HSTRING::from(&native), None::<&IBindCtx>)
-        }
-        .map_err(|e| format!("Cannot open {path}: {e}"))?;
+        let item: IShellItem =
+            unsafe { SHCreateItemFromParsingName(&HSTRING::from(&native), None::<&IBindCtx>) }
+                .map_err(|e| format!("Cannot open {path}: {e}"))?;
         unsafe { item.BindToHandler(None::<&IBindCtx>, &BHID_SFUIObject) }
             .map_err(|e| format!("No system menu for {path}: {e}"))
     }
 
     fn shared_menu(path: &str) -> Result<(IContextMenu, MenuGuard), String> {
         let ctx = context_menu(path)?;
-        let handle = unsafe { CreatePopupMenu() }.map_err(|e| format!("Cannot create menu: {e}"))?;
+        let handle =
+            unsafe { CreatePopupMenu() }.map_err(|e| format!("Cannot create menu: {e}"))?;
         let guard = MenuGuard(handle);
         unsafe {
             ctx.QueryContextMenu(handle, 0, CMD_FIRST, CMD_LAST, CMF_NORMAL)

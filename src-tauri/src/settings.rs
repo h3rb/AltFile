@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::fs;
 use tauri::State;
 
-const MAX_SETTINGS_BYTES: usize = 512 * 1024;
+const MAX_SETTINGS_BYTES: usize = 4 * 1024 * 1024;
 
 #[tauri::command]
 pub fn load_settings(state: State<'_, AppState>) -> Option<Value> {

@@ -1,4 +1,4 @@
-use crate::{paths, AppState};
+use crate::{mesh, paths, AppState};
 use image::{DynamicImage, ImageDecoder, Rgb, RgbImage};
 use serde::Serialize;
 use std::fs;
@@ -48,8 +48,12 @@ fn mtime_ms(meta: &fs::Metadata) -> u64 {
 
 fn is_candidate(kind: &str, ext: &str) -> bool {
     match kind {
-        "image" | "video" | "audio" | "exe" => true,
-        "doc" => !matches!(ext, "txt" | "md" | "markdown" | "log" | "csv" | "tsv" | "rtf"),
+        "image" | "video" | "audio" | "exe" | "shortcut" => true,
+        "model" => matches!(ext, "stl" | "obj" | "ply" | "3mf"),
+        "doc" => !matches!(
+            ext,
+            "txt" | "md" | "markdown" | "log" | "csv" | "tsv" | "rtf"
+        ),
         _ => false,
     }
 }
@@ -83,8 +87,7 @@ fn flatten(img: &DynamicImage, max: u32) -> RgbImage {
 
 fn encode_jpeg(img: &RgbImage) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
-    let mut encoder =
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 84);
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 84);
     encoder
         .encode_image(img)
         .map_err(|e| format!("Could not encode thumbnail: {e}"))?;
@@ -186,10 +189,13 @@ pub fn generate(
                 }
             }
         }
+    } else if kind == "model" {
+        source = "mesh";
+        mesh::render_image(&p, &ext, size).map(DynamicImage::ImageRgb8)
     } else {
         #[cfg(windows)]
         {
-            if kind == "exe" {
+            if kind == "exe" || kind == "shortcut" {
                 source = "icon";
                 shell::image(&p, size, true)
             } else {
@@ -506,9 +512,20 @@ mod linux_media {
         }
         let _ = std::fs::create_dir_all(dir);
         let out = temp_path(dir, "frame", "jpg");
-        let scale = format!("scale={s}:{s}:force_original_aspect_ratio=decrease", s = size);
+        let scale = format!(
+            "scale={s}:{s}:force_original_aspect_ratio=decrease",
+            s = size
+        );
         let status = Command::new("ffmpeg")
-            .args(["-hide_banner", "-loglevel", "error", "-y", "-ss", "0.4", "-i"])
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-ss",
+                "0.4",
+                "-i",
+            ])
             .arg(path)
             .args(["-frames:v", "1", "-vf", &scale, "-q:v", "3"])
             .arg(&out)
@@ -532,7 +549,16 @@ mod linux_media {
         let _ = std::fs::create_dir_all(dir);
         let prefix = temp_path(dir, "pdf", "");
         let status = Command::new("pdftoppm")
-            .args(["-f", "1", "-l", "1", "-singlefile", "-scale-to", &size.to_string(), "-png"])
+            .args([
+                "-f",
+                "1",
+                "-l",
+                "1",
+                "-singlefile",
+                "-scale-to",
+                &size.to_string(),
+                "-png",
+            ])
             .arg(path)
             .arg(&prefix)
             .stdout(Stdio::null())

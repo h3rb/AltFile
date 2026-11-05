@@ -128,13 +128,14 @@ function syncSearchUi() {
   if (!input) return;
   const value = tab?.query || '';
   if (input.value !== value) input.value = value;
-  input.placeholder = tab?.recursive ? 'Search subfolders' : 'Filter this folder';
+  const recursive = state.searchRecursive;
+  input.placeholder = recursive ? 'Search subfolders' : 'Filter this folder';
   if (scope) {
-    scope.classList.toggle('on', Boolean(tab?.recursive));
-    scope.title = tab?.recursive
+    scope.classList.toggle('on', recursive);
+    scope.title = recursive
       ? 'Searching this folder and its subfolders — click to search only this folder'
       : 'Searching this folder only — click to include subfolders';
-    scope.setAttribute('aria-pressed', tab?.recursive ? 'true' : 'false');
+    scope.setAttribute('aria-pressed', recursive ? 'true' : 'false');
   }
 }
 
@@ -475,21 +476,25 @@ function endPathEdit(commit) {
   }
 }
 
+function resetSearch() {
+  if (searchTimer) {
+    searchTimer.cancel();
+    searchTimer = null;
+  }
+  state.searchToken += 1;
+  state.searchResults = null;
+  state.searching = false;
+  files.recomputeVisible();
+  files.renderFiles();
+  files.renderFilters();
+}
+
 async function runSearchNow() {
   const tab = activeTab();
   if (!tab) return;
   const query = (tab.query || '').trim();
-  if (!tab.recursive || query.length < 2) {
-    if (searchTimer) {
-      searchTimer.cancel();
-      searchTimer = null;
-    }
-    state.searchToken += 1;
-    state.searchResults = null;
-    state.searching = false;
-    files.recomputeVisible();
-    files.renderFiles();
-    files.renderFilters();
+  if (!state.searchRecursive || query.length < 2) {
+    resetSearch();
     return;
   }
   const token = ++state.searchToken;
@@ -521,39 +526,53 @@ function onSearchInput() {
   const input = document.getElementById('search-input');
   if (!tab || !input) return;
   tab.query = input.value;
-  if (tab.recursive && tab.query.trim().length >= 2) {
-    scheduleRunSearch();
-  } else {
-    if (searchTimer) {
-      searchTimer.cancel();
-      searchTimer = null;
-    }
-    state.searchToken += 1;
-    state.searchResults = null;
-    state.searching = false;
-    files.recomputeVisible();
-    files.renderFiles();
-    files.renderFilters();
-  }
+  if (state.searchRecursive && tab.query.trim().length >= 2) scheduleRunSearch();
+  else resetSearch();
+}
+
+function setSearchRecursive(value) {
+  const next = Boolean(value);
+  if (next === state.searchRecursive) return;
+  state.searchRecursive = next;
+  scheduleSave();
+  syncSearchUi();
+  const tab = activeTab();
+  if (!tab) return;
+  if (next && (tab.query || '').trim().length >= 2) scheduleRunSearch();
+  else if (!next) resetSearch();
 }
 
 function toggleSearchScope() {
-  const tab = activeTab();
-  if (!tab) return;
-  tab.recursive = !tab.recursive;
-  scheduleSave();
-  syncSearchUi();
-  if ((tab.query || '').trim().length >= 2) {
-    if (tab.recursive) scheduleRunSearch();
-    else {
-      state.searchToken += 1;
-      state.searchResults = null;
-      state.searching = false;
-      files.recomputeVisible();
-      files.renderFiles();
-      files.renderFilters();
-    }
+  setSearchRecursive(!state.searchRecursive);
+}
+
+let networkLoading = false;
+
+async function loadNetwork() {
+  if (networkLoading) return;
+  if (state.app?.platform !== 'windows') {
+    state.network = [];
+    sidebar.renderSidebar();
+    return;
   }
+  networkLoading = true;
+  state.network = null;
+  sidebar.renderSidebar();
+  const merge = (items) => {
+    if (!items?.length) return;
+    const list = state.network || [];
+    for (const place of items) {
+      const known = list.some((other) => other.path.toLowerCase() === place.path.toLowerCase());
+      if (!known) list.push(place);
+    }
+    state.network = list;
+    sidebar.renderSidebar();
+  };
+  const ask = (call) => Promise.resolve(call).then(merge).catch(() => {});
+  await Promise.all([ask(api.networkPlaces()), ask(api.networkComputers())]);
+  state.network = state.network || [];
+  networkLoading = false;
+  sidebar.renderSidebar();
 }
 
 function focusSearch() {
@@ -1053,8 +1072,7 @@ function bindStaticEvents() {
       searchInput.blur();
     } else if (event.key === 'Enter') {
       event.preventDefault();
-      const tab = activeTab();
-      if (tab?.recursive) runSearchNow();
+      if (state.searchRecursive) runSearchNow();
       else {
         const first = state.visibleEntries[0];
         if (first) openEntry(first);
@@ -1103,6 +1121,7 @@ function assignBridge() {
     toggleHidden,
     setPreviewOpen,
     togglePreview,
+    setSearchRecursive,
     newFolder: ops.newFolder,
     rename: ops.renameEntry,
     remove: ops.removeEntries,
@@ -1113,6 +1132,7 @@ function assignBridge() {
     reveal: ops.revealEntry,
     properties: ops.showProperties,
     bookmarkCurrent: sidebar.addBookmarkCurrent,
+    rescanNetwork: loadNetwork,
     openSettings,
     openPalette,
     resetFilters,
@@ -1154,7 +1174,7 @@ async function boot() {
   try {
     state.app = await api.appInfo();
   } catch {
-    state.app = { home: '/', sep: '/', platform: 'unknown', portable: false, version: '0.1.0', dataDir: '', cacheDir: '' };
+    state.app = { home: '/', sep: '/', platform: 'unknown', portable: false, version: '0.2.0', dataDir: '', cacheDir: '' };
   }
   try {
     state.places = await api.listPlaces();
@@ -1174,6 +1194,7 @@ async function boot() {
   listenFilesystem();
   renderChrome();
   preview.renderPreview();
+  loadNetwork().catch(() => {});
 
   const ok = await files.refreshFiles();
   const tab = activeTab();

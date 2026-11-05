@@ -1,7 +1,8 @@
-import { api } from './api.js';
+import { api, gifUrl, mediaUrl } from './api.js';
 import { state, activeTab, app, scheduleSave } from './state.js';
 import { icon, kindIcon } from './icons.js';
 import { fontTileHtml, observeFontTiles } from './fonts.js';
+import { detailCellHtml, observeDetails } from './details.js';
 import {
   esc,
   humanSize,
@@ -9,6 +10,7 @@ import {
   fmtDate,
   fmtRelative,
   naturalCompare,
+  compactCount,
   fuzzy,
   highlightName,
   kindLabel,
@@ -21,8 +23,10 @@ const LARGE_FILE = 64 * 1024 * 1024;
 const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
 const PAGE_SIZE = 1500;
 
-const THUMB_KINDS = new Set(['image', 'video', 'audio', 'exe']);
+const THUMB_KINDS = new Set(['image', 'video', 'audio', 'exe', 'shortcut']);
+const THUMB_MODELS = new Set(['stl', 'obj', 'ply', '3mf']);
 const NO_DOC_THUMB = new Set(['txt', 'md', 'markdown', 'log', 'csv', 'tsv', 'rtf']);
+const ARCHIVE_EXTS = new Set(['zip', 'rar', 'tar', 'gz', 'tgz', 'bz2', 'tbz2', 'tbz']);
 
 const FILTERS = [
   { id: 'all', label: 'All', icon: 'layers' },
@@ -33,6 +37,7 @@ const FILTERS = [
   { id: 'docs', label: 'Docs', icon: 'fileText' },
   { id: 'code', label: 'Code', icon: 'code' },
   { id: 'archives', label: 'Archives', icon: 'archive' },
+  { id: 'models', label: 'Models', icon: 'cube' },
   { id: 'recent', label: 'Recent', icon: 'sparkles', smart: true },
   { id: 'large', label: 'Large', icon: 'funnel', smart: true },
 ];
@@ -44,6 +49,7 @@ const MAX_CACHE = 4000;
 const MAX_REQUESTS = 4;
 let thumbActive = 0;
 let observer = null;
+let hoverVideoThumb = null;
 
 const countCache = new Map();
 const countQueue = [];
@@ -59,12 +65,24 @@ const MAX_SIZE_REQUESTS = 2;
 let sizeActive = 0;
 let sizeObserver = null;
 
+const archiveCache = new Map();
+const archiveQueue = [];
+const MAX_ARCHIVE_CACHE = 4000;
+const MAX_ARCHIVE_REQUESTS = 2;
+let archiveActive = 0;
+let archiveObserver = null;
+
 const scrollEl = () => document.getElementById('files-scroll');
 const paneStateEl = () => document.getElementById('pane-state');
 
-function wantsThumb(entry) {
+export function isGifEntry(entry) {
+  return Boolean(entry && !entry.isDir && entry.kind === 'image' && (entry.ext || '').toLowerCase() === 'gif');
+}
+
+export function wantsThumb(entry) {
   if (!entry || entry.isDir) return false;
   if (THUMB_KINDS.has(entry.kind)) return true;
+  if (entry.kind === 'model') return THUMB_MODELS.has((entry.ext || '').toLowerCase());
   if (entry.kind === 'doc') return !NO_DOC_THUMB.has((entry.ext || '').toLowerCase());
   return false;
 }
@@ -99,6 +117,8 @@ function matchesFilter(entry, filter) {
       return entry.kind === 'code';
     case 'archives':
       return entry.kind === 'archive';
+    case 'models':
+      return entry.kind === 'model';
     case 'recent':
       return entry.modified > Date.now() - RECENT_MS;
     case 'large':
@@ -259,6 +279,9 @@ function badgeHtml(entry) {
   if (entry.kind === 'audio') {
     return `<span class="thumb-badge">${icon('music', 9)} ${esc(ext || 'AUDIO')}</span>`;
   }
+  if (entry.kind === 'model' && THUMB_MODELS.has((entry.ext || '').toLowerCase())) {
+    return `<span class="thumb-badge">${icon('cube', 9)} ${esc(ext)}</span>`;
+  }
   if (entry.kind === 'image' && entry.ext === 'gif') {
     return '<span class="thumb-badge">GIF</span>';
   }
@@ -283,6 +306,38 @@ function folderTileHtml(entry) {
         </div>`;
 }
 
+export function archiveSupported(entry) {
+  return Boolean(
+    entry && !entry.isDir && entry.kind === 'archive' && ARCHIVE_EXTS.has((entry.ext || '').toLowerCase())
+  );
+}
+
+export function archiveFormat(entry) {
+  const name = (entry.name || '').toLowerCase();
+  if (name.endsWith('.tar.gz') || name.endsWith('.tgz')) return 'TAR.GZ';
+  if (name.endsWith('.tar.bz2') || name.endsWith('.tbz2') || name.endsWith('.tbz')) return 'TAR.BZ2';
+  return (entry.ext || 'archive').toUpperCase();
+}
+
+function archiveTileHtml(entry) {
+  if (!archiveSupported(entry)) return '';
+  const color = kindColor('archive');
+  return `
+        <div class="archive-tile" data-archive-path="${esc(entry.path)}" data-archive-mtime="${entry.modified || 0}" style="--kind-color:${color};--kind-glow:${rgba(color, 0.14)}">
+          <div class="archive-head">${icon('archive', 11)}<span>${esc(archiveFormat(entry))}</span></div>
+          <div class="archive-rows" hidden></div>
+          <div class="archive-foot" hidden>
+            <span class="archive-kind"></span>
+            <span class="archive-nums">
+              <span class="archive-count">${icon('fileText', 9)}<b data-role="files"></b></span>
+              <span class="archive-count">${icon('folder', 9)}<b data-role="folders"></b></span>
+            </span>
+          </div>
+          <div class="archive-skeleton" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="archive-note" hidden></div>
+        </div>`;
+}
+
 function cardHtml(entry, index) {
   const color = kindColor(entry.kind);
   const thumb = wantsThumb(entry);
@@ -291,15 +346,18 @@ function cardHtml(entry, index) {
   if (state.focusIndex === index) classes.push('focused');
   const meta = entry.isDir ? fmtRelative(entry.modified) : humanSize(entry.size);
   const thumbClass = entry.isDir ? 'card-thumb folder-thumb' : 'card-thumb';
+  const gif = isGifEntry(entry);
+  const hoverVideo = !entry.isDir && entry.kind === 'video';
   const thumbBody = entry.isDir
     ? folderTileHtml(entry)
-    : `${fontTileHtml(entry) || `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>`}
+    : `${archiveTileHtml(entry) || fontTileHtml(entry) || `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>`}
         ${thumb ? '<img alt="" decoding="async" draggable="false">' : ''}`;
   return `
     <article class="${classes.join(' ')}" data-path="${esc(entry.path)}" data-index="${index}" title="${esc(entry.path)}">
-      <div class="${thumbClass}"${thumb ? ` data-thumb-path="${esc(entry.path)}" data-thumb-mtime="${entry.modified || 0}"` : ''}>
+      <div class="${thumbClass}"${thumb ? ` data-thumb-path="${esc(entry.path)}" data-thumb-mtime="${entry.modified || 0}"` : ''}${gif ? ` data-gif-path="${esc(entry.path)}" data-gif-mtime="${entry.modified || 0}"` : ''}${hoverVideo ? ` data-video-path="${esc(entry.path)}"` : ''}>
         ${thumbBody}
         ${badgeHtml(entry)}
+        ${entry.kind === 'shortcut' ? `<span class="shortcut-mark" title="Shortcut">${icon('link', 11)}</span>` : ''}
       </div>
       <div class="card-name">${nameHtml(entry)}</div>
       <div class="card-meta">
@@ -324,7 +382,8 @@ function rowHtml(entry, index) {
       </div>
       <div class="cell-size"${entry.isDir ? ` data-size-path="${esc(entry.path)}" data-size-mtime="${entry.modified || 0}"` : ''}>${entry.isDir ? '—' : esc(humanSize(entry.size))}</div>
       <div class="cell-date">${esc(fmtDate(entry.modified))}</div>
-      <div class="cell-kind">${esc(kindLabel(entry.kind))}</div>
+      <div class="cell-kind">${esc(kindLabel(entry.kind, entry.ext))}</div>
+      ${detailCellHtml(entry)}
     </div>`;
 }
 
@@ -356,12 +415,13 @@ function headHtml(tab) {
     <button class="${cls('name')}" type="button" data-sort="name">Name ${sortArrow(tab, 'name')}</button>
     <button class="${cls('size')}" type="button" data-sort="size">Size ${sortArrow(tab, 'size')}</button>
     <button class="${cls('modified')}" type="button" data-sort="modified">Modified ${sortArrow(tab, 'modified')}</button>
-    <button class="${cls('kind')}" type="button" data-sort="kind">Kind ${sortArrow(tab, 'kind')}</button>`;
+    <button class="${cls('kind')}" type="button" data-sort="kind">Kind ${sortArrow(tab, 'kind')}</button>
+    <div class="head-cell detail">Details</div>`;
 }
 
 function searchBanner(tab) {
   const count = state.visibleEntries.length;
-  const scope = tab.recursive ? 'including subfolders' : 'in this folder';
+  const scope = state.searchRecursive ? 'including subfolders' : 'in this folder';
   const label = state.searching
     ? `<span>${icon('loader', 12, 'spin')} Searching ${scope}…</span>`
     : `<span>Found <strong>${humanCount(count)}</strong> ${count === 1 ? 'item' : 'items'} for <strong>${esc(tab.query)}</strong> ${scope}</span>`;
@@ -445,7 +505,7 @@ function emptyState(tab) {
     renderPaneState({
       iconName: 'search',
       title: 'No matching files',
-      text: tab.query ? `Nothing matched “${tab.query}” in ${tab.recursive ? 'this folder or its subfolders' : 'this folder'}.` : 'Try a different search.',
+      text: tab.query ? `Nothing matched “${tab.query}” in ${state.searchRecursive ? 'this folder or its subfolders' : 'this folder'}.` : 'Try a different search.',
       actions: [{ label: 'Clear search', action: 'reset-filters', kind: 'primary', icon: 'x' }],
     });
     return;
@@ -474,6 +534,7 @@ export function renderFiles() {
   const tab = activeTab();
   if (!scroll || !tab) return;
 
+  stopCardVideo(hoverVideoThumb);
   scroll.style.setProperty('--card-size', `${state.thumbSize}px`);
   const head = document.getElementById('files-head');
   const isSearch = state.searchResults !== null;
@@ -515,8 +576,10 @@ export function renderFiles() {
 
   observeThumbs();
   observeCounts();
+  observeArchives();
   observeFontTiles();
   observeSizes();
+  observeDetails();
   paintSelection();
   updateStatus();
   app.onSelectionChange?.();
@@ -573,9 +636,96 @@ export function updateStatus() {
 
 function attachThumb(img, url) {
   if (!img) return;
+  img.dataset.stillSrc = url;
   img.onload = () => img.classList.add('loaded');
-  img.onerror = () => img.remove();
-  img.src = url;
+  img.onerror = () => {
+    if (img.dataset.gifActive === '1' && img.dataset.stillSrc) {
+      delete img.dataset.gifActive;
+      img.src = img.dataset.stillSrc;
+      return;
+    }
+    img.remove();
+  };
+  if (img.dataset.gifActive !== '1') img.src = url;
+}
+
+function playCardGif(thumb) {
+  if (!thumb || thumb.dataset.gifPlaying === '1') return;
+  const img = thumb.querySelector('img');
+  if (!img) return;
+  thumb.dataset.gifPlaying = '1';
+  img.dataset.gifActive = '1';
+  img.src = gifUrl(thumb.dataset.gifPath, Number(thumb.dataset.gifMtime) || 0);
+}
+
+function stopCardGif(thumb) {
+  if (!thumb || thumb.dataset.gifPlaying !== '1') return;
+  delete thumb.dataset.gifPlaying;
+  const img = thumb.querySelector('img');
+  if (!img) return;
+  delete img.dataset.gifActive;
+  if (img.dataset.stillSrc) img.src = img.dataset.stillSrc;
+}
+
+function onCardGifOver(event) {
+  const thumb = event.target.closest?.('.card-thumb[data-gif-path]');
+  if (!thumb || thumb.contains(event.relatedTarget)) return;
+  playCardGif(thumb);
+}
+
+function onCardGifOut(event) {
+  const thumb = event.target.closest?.('.card-thumb[data-gif-path]');
+  if (!thumb || thumb.contains(event.relatedTarget)) return;
+  stopCardGif(thumb);
+}
+
+function playCardVideo(thumb) {
+  if (!thumb || thumb.dataset.videoPlaying === '1') return;
+  thumb.dataset.videoPlaying = '1';
+  const video = document.createElement('video');
+  video.className = 'thumb-video';
+  video.muted = true;
+  video.defaultMuted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.preload = 'metadata';
+  video.disablePictureInPicture = true;
+  video.setAttribute('muted', '');
+  video.setAttribute('playsinline', '');
+  video.addEventListener('playing', () => {
+    if (thumb.dataset.videoPlaying === '1') video.classList.add('playing');
+  });
+  video.addEventListener('error', () => stopCardVideo(thumb));
+  video.src = mediaUrl(thumb.dataset.videoPath);
+  thumb.append(video);
+  hoverVideoThumb = thumb;
+  const started = video.play();
+  if (started && started.catch) started.catch(() => {});
+}
+
+function stopCardVideo(thumb) {
+  if (!thumb) return;
+  delete thumb.dataset.videoPlaying;
+  if (hoverVideoThumb === thumb) hoverVideoThumb = null;
+  const video = thumb.querySelector?.('video.thumb-video');
+  if (!video) return;
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  video.remove();
+}
+
+function onCardVideoOver(event) {
+  const thumb = event.target.closest?.('.card-thumb[data-video-path]');
+  if (!thumb || thumb.contains(event.relatedTarget)) return;
+  if (hoverVideoThumb && hoverVideoThumb !== thumb) stopCardVideo(hoverVideoThumb);
+  playCardVideo(thumb);
+}
+
+function onCardVideoOut(event) {
+  const thumb = event.target.closest?.('.card-thumb[data-video-path]');
+  if (!thumb || thumb.contains(event.relatedTarget)) return;
+  stopCardVideo(thumb);
 }
 
 function pumpThumbs() {
@@ -647,17 +797,6 @@ function observeThumbs() {
 
 function countsKey(path, mtime, showHidden) {
   return `${path.toLowerCase()}|${mtime}|${showHidden ? 1 : 0}`;
-}
-
-function compactCount(value) {
-  const count = Number(value) || 0;
-  if (count < 1000) return String(count);
-  if (count < 999_500) {
-    const thousands = count / 1000;
-    return `${thousands < 10 ? thousands.toFixed(1).replace(/\.0$/, '') : Math.round(thousands)}k`;
-  }
-  const millions = count / 1_000_000;
-  return `${millions < 10 ? millions.toFixed(1).replace(/\.0$/, '') : Math.round(millions)}m`;
 }
 
 function applyCounts(el, counts) {
@@ -737,6 +876,107 @@ function observeCounts() {
     { root: scroll, rootMargin: '240px 0px' }
   );
   targets.forEach((target) => countObserver.observe(target));
+}
+
+function archiveKey(path, mtime) {
+  return `${path.toLowerCase()}|${mtime}`;
+}
+
+export function archiveSummaryFor(entry) {
+  const key = archiveKey(entry.path, entry.modified || 0);
+  let pending = archiveCache.get(key);
+  if (!pending) {
+    pending = api.archiveSummary(entry.path).catch(() => null);
+    archiveCache.set(key, pending);
+    if (archiveCache.size > MAX_ARCHIVE_CACHE) {
+      const oldest = archiveCache.keys().next().value;
+      if (oldest !== undefined) archiveCache.delete(oldest);
+    }
+  }
+  return pending;
+}
+
+function archiveRowHtml(name) {
+  const clean = name.replace(/\/+$/, '');
+  const base = clean.slice(clean.lastIndexOf('/') + 1) || clean;
+  return `<div class="archive-row">${icon(name.endsWith('/') ? 'folder' : 'fileText', 9)}<span>${esc(base)}</span></div>`;
+}
+
+function applyArchive(el, summary) {
+  if (!el) return;
+  el.querySelector('.archive-skeleton')?.remove();
+  if (!summary) {
+    el.classList.add('archive-unknown');
+    const note = el.querySelector('.archive-note');
+    if (note) {
+      note.textContent = 'Contents unavailable';
+      note.hidden = false;
+    }
+    el.title = 'Archive index could not be read';
+    return;
+  }
+  const rows = el.querySelector('.archive-rows');
+  if (rows) {
+    rows.innerHTML = summary.top.slice(0, 4).map(archiveRowHtml).join('');
+    rows.hidden = !summary.top.length;
+  }
+  const kind = el.querySelector('.archive-kind');
+  if (kind) kind.textContent = summary.kind;
+  const files = el.querySelector('[data-role="files"]');
+  const folders = el.querySelector('[data-role="folders"]');
+  if (files) files.textContent = compactCount(summary.files) + (summary.truncated ? '+' : '');
+  if (folders) folders.textContent = compactCount(summary.folders) + (summary.truncated ? '+' : '');
+  const foot = el.querySelector('.archive-foot');
+  if (foot) foot.hidden = false;
+  el.title = `${summary.format} · ${summary.kind} · ${humanCount(summary.files)} ${summary.files === 1 ? 'file' : 'files'} · ${humanCount(summary.folders)} ${summary.folders === 1 ? 'folder' : 'folders'}${summary.truncated ? ' · partial scan' : ''}`;
+}
+
+function pumpArchives() {
+  while (archiveActive < MAX_ARCHIVE_REQUESTS && archiveQueue.length) {
+    const job = archiveQueue.shift();
+    archiveActive += 1;
+    archiveSummaryFor(job.entry)
+      .then((summary) => {
+        if (job.el.isConnected) applyArchive(job.el, summary);
+      })
+      .finally(() => {
+        archiveActive -= 1;
+        pumpArchives();
+      });
+  }
+}
+
+function loadArchive(el) {
+  if (!el || el.dataset.archiveLoaded === '1') return;
+  el.dataset.archiveLoaded = '1';
+  const path = el.dataset.archivePath;
+  if (!path) return;
+  archiveQueue.push({ entry: { path, modified: Number(el.dataset.archiveMtime) || 0 }, el });
+  pumpArchives();
+}
+
+function observeArchives() {
+  if (archiveObserver) archiveObserver.disconnect();
+  const scroll = scrollEl();
+  if (!scroll) return;
+  const targets = scroll.querySelectorAll('.archive-tile[data-archive-path]');
+  if (!targets.length) return;
+
+  if (!('IntersectionObserver' in window)) {
+    targets.forEach(loadArchive);
+    return;
+  }
+  archiveObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        archiveObserver.unobserve(entry.target);
+        loadArchive(entry.target);
+      }
+    },
+    { root: scroll, rootMargin: '240px 0px' }
+  );
+  targets.forEach((target) => archiveObserver.observe(target));
 }
 
 function applySize(el, info) {
@@ -1001,6 +1241,11 @@ export function initFiles() {
   scroll?.addEventListener('click', onClick);
   scroll?.addEventListener('dblclick', onDoubleClick);
   scroll?.addEventListener('contextmenu', onContextMenu);
+  scroll?.addEventListener('mouseover', onCardGifOver);
+  scroll?.addEventListener('mouseout', onCardGifOut);
+  scroll?.addEventListener('mouseover', onCardVideoOver);
+  scroll?.addEventListener('mouseout', onCardVideoOut);
+  window.addEventListener('blur', () => stopCardVideo(hoverVideoThumb));
   head?.addEventListener('click', onHeadClick);
   chips?.addEventListener('click', onChipsClick);
   pane?.addEventListener('click', (event) => {

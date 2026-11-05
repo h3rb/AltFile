@@ -27,6 +27,17 @@ export function humanCount(n) {
   return (Number(n) || 0).toLocaleString();
 }
 
+export function compactCount(value) {
+  const count = Number(value) || 0;
+  if (count < 1000) return String(count);
+  if (count < 999_500) {
+    const thousands = count / 1000;
+    return `${thousands < 10 ? thousands.toFixed(1).replace(/\.0$/, '') : Math.round(thousands)}k`;
+  }
+  const millions = count / 1_000_000;
+  return `${millions < 10 ? millions.toFixed(1).replace(/\.0$/, '') : Math.round(millions)}m`;
+}
+
 const dateFmt = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
   month: 'short',
@@ -203,7 +214,9 @@ export const KIND_LABELS = {
   doc: 'Document',
   archive: 'Archive',
   exe: 'Program',
+  shortcut: 'Shortcut',
   font: 'Font',
+  model: '3D Model',
   file: 'File',
   other: 'Group',
 };
@@ -217,13 +230,17 @@ export const KIND_COLORS = {
   doc: '#fbbf24',
   archive: '#fb923c',
   exe: '#f87171',
+  shortcut: '#fda4af',
   font: '#a78bfa',
+  model: '#38bdf8',
   file: '#94a3b8',
   other: '#64748b',
 };
 
-export function kindLabel(kind) {
-  return KIND_LABELS[kind] || 'File';
+export function kindLabel(kind, ext = '') {
+  const label = KIND_LABELS[kind] || 'File';
+  if (label === 'File' && ext) return `File: ${ext.toUpperCase()}`;
+  return label;
 }
 
 export function kindColor(kind) {

@@ -22,7 +22,7 @@ const EXT_GROUPS = {
   code: 'rs js mjs cjs ts tsx jsx py go java c h cpp hpp cc cs php rb swift kt kts lua sh bash ps1 html css scss less json jsonc yaml yml toml xml sql vue svelte astro',
   doc: 'pdf doc docx xls xlsx ppt pptx txt md markdown rtf odt csv tsv',
   archive: 'zip rar 7z tar gz bz2 xz iso cab',
-  exe: 'exe msi dll bat cmd appimage deb rpm',
+  exe: 'exe msi dll bat cmd appimage deb rpm lnk',
   font: 'ttf otf woff woff2 eot',
 };
 const EXT_KIND = new Map();

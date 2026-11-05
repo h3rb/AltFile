@@ -8,6 +8,11 @@ export function mediaUrl(path) {
     : `media://localhost/${encoded}`;
 }
 
+export function gifUrl(path, mtime = 0) {
+  const base = mediaUrl(path);
+  return mtime ? `${base}?m=${mtime}` : base;
+}
+
 export function fontUrl(path, mtime = 0) {
   const encoded = encodeURIComponent(path || '');
   const base = IS_WINDOWS ? `http://font.localhost/${encoded}` : `font://localhost/${encoded}`;
@@ -24,6 +29,8 @@ function invoke(cmd, args) {
 export const api = {
   appInfo: () => invoke('app_info'),
   listPlaces: () => invoke('list_places'),
+  networkPlaces: () => invoke('network_places'),
+  networkComputers: () => invoke('network_computers'),
   listDir: (path, showHidden) => invoke('list_dir', { path, showHidden }),
   folderCounts: (path, showHidden) => invoke('folder_counts', { path, showHidden }),
   folderSize: (path, showHidden) => invoke('folder_size', { path, showHidden }),
@@ -33,6 +40,9 @@ export const api = {
   shellMenuInvoke: (path, id) => invoke('shell_menu_invoke', { path, id }),
   copyText: (text) => invoke('copy_text', { text }),
   fileInfo: (path) => invoke('file_info', { path }),
+  meshBounds: (path) => invoke('mesh_bounds', { path }),
+  meshGeometry: (path) => invoke('mesh_geometry', { path }),
+  archiveSummary: (path) => invoke('archive_summary', { path }),
   textPreview: (path, maxBytes) => invoke('text_preview', { path, maxBytes }),
   copyPaths: (sources, destDir, cut) => invoke('copy_paths', { sources, destDir, cut }),
   deletePaths: (items) => invoke('delete_paths', { items }),

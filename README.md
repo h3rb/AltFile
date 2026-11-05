@@ -7,9 +7,23 @@ treemap visualization of any folder — and it builds as a portable executable f
 ## Features
 
 - **Dark UI** with grid and list views, tabs, breadcrumbs, sidebar places, bookmarks, and a details pane.
+- **Network shares** appear in a `Network` group under *This PC* on Windows: the sidebar asks both the
+  network browse list and the shell Network folder, so it finds machines the other source misses (and
+  shares the browse list shows but the shell hides). Entries open the UNC path like any other folder, and
+  the refresh icon rescans. The group is hidden on Linux, where there is nothing to enumerate.
 - **Smart thumbnails** generated on demand and cached by content hash (512 MB LRU-style cache):
   - Windows: images (with EXIF orientation), video/audio posters, PDF and Office documents, and executable icons via the shell.
   - Linux: images, video posters through `ffmpeg`, and PDF first pages through `pdftoppm` when available.
+  - Both: **3D model renders** for `.stl`, `.obj`, `.ply` and `.3mf` — the mesh is parsed and shaded by a small
+    built-in software renderer (no shell handler, no GPU), so a model card shows the object itself from a
+    three-quarter view instead of a generic icon.
+- **Shortcuts**: `.lnk` files are labeled *Shortcut* everywhere (cards, list, Details) and show a link badge over
+  their grid thumbnail, while the thumbnail itself comes from the shell so it reflects the shortcut's target.
+- **Animated GIFs**: GIF cards and the preview pane show a still first-frame thumbnail, then play the original
+  animation while the pointer is over the image and return to the still on mouse-out. The animation streams
+  through the media protocol and is cached per modification time.
+- **Hover video previews**: video cards start a muted, looping inline playback of the file while the pointer is
+  over the card, and return to the poster frame on mouse-out.
 - **Grid folder cards** fill the preview box with an oversized folder and show live subfolder/file counts, each
   marked with a folder or document icon; counts load lazily and honor the hidden-file toggle.
 - **Folder content size**: the same tile shows the recursive size of the folder, and list view replaces the `—`
@@ -17,15 +31,33 @@ treemap visualization of any folder — and it builds as a portable executable f
   total is suffixed with `+` instead of blocking the view.
 - **Font specimens**: `.ttf`, `.otf`, `.woff` and `.woff2` cards and the preview pane render `AaBbCc…Zz01234`
   in the actual typeface, loaded lazily for visible tiles through the `font://` protocol.
+- **Archive contents**: ZIP, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, GZ, BZ2 and RAR (4 and 5) cards list the first
+  entries, the archive format, file/folder counts, and a best-guess content type (Application, Source Code,
+  Media Files, Documents, Fonts, 3D Models, Archives, or Mixed Files). ZIP indexes are read from the central
+  directory without decompressing entry data; compressed tar streams are scanned with a 256 MB budget, and a
+  partial result is marked with `+`. The preview pane shows the same contents list with total uncompressed size.
 - **Treemap visualization** for the active folder: squarified tiles, drill-down, hover tooltip, large-file and
   extension/contents insights, hidden-file support, and cancellable scans. Folder tiles show their immediate
   children nested inside so a folder's makeup is visible without drilling in.
 - **Preview pane** with media thumbnails, file metadata, image dimensions, and text previews (UTF-8/UTF-16).
+  Model files that the software renderer understands (`.stl`, `.obj`, `.ply`, `.3mf`) open in a slowly rotating
+  WebGL view instead of a static poster, so the shape can be inspected without leaving the app.
 - **Media previews and playlist**: audio waveforms with duration, bitrate, sample rate, and channels
   (click the waveform to start playback at that point); video frame previews with hover scrubbing over
   the timeline; and a persistent player with a queue you can fill from the preview pane, context menu,
-  or command palette (`Space` toggles playback).
-- **Search** the current folder instantly, or recurse into subfolders with gitignore-aware walking.
+  or command palette (`Space` toggles playback). When the file open in the preview is playing, the
+  preview's own video follows the player — starting, pausing, and staying in sync — and scrubbing the
+  preview timeline seeks the player. While audio plays, the shading on grid thumbnails pulses subtly to
+  the beat (Web Audio analyser; disabled when the system asks for reduced motion). The ad hoc queue can be
+  saved as a named playlist (`Save` in the playlist panel) into a new name or an existing saved playlist;
+  `Open` reopens saved playlists, adds them to the current queue, or deletes them.
+- **Search** the current folder instantly, or recurse into subfolders with gitignore-aware walking. Which of
+  the two the search box does is a setting (**Settings → Browsing → Search subfolders**); the scope button next
+  to the box flips the same switch, and the choice is remembered across sessions.
+- **Details column** in list view, filled per kind: play length for audio and video, pixel size for images,
+  subfolder/file counts for folders and archives, and bounding-box dimensions for 3D models (`.obj`, `.stl`,
+  `.ply`, `.3mf`, `.gltf`, `.glb`, `.off`). Values load lazily for visible rows only and are cached per file.
+  The Kind column names the extension for files that match no known kind (`File: XYZ`).
 - **File operations**: create folder, rename, copy/cut/paste with collision-safe names, reveal, properties,
   and delete to the system Trash.
 - **System Menu** (Windows): right-click any drive, file or folder — including treemap tiles — and open
@@ -33,7 +65,7 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **Keyboard-first**: command palette, quick paths, vim-free arrow navigation, and standard shortcuts.
 - **Portable mode**: place `portable.txt` next to the executable and settings, session, and thumbnails are kept
   in a `data` folder beside it. On Windows the WebView2 profile moves there too.
-- **Session restore**: tabs, bookmarks, recent folders, thumbnail size, panel state, and the playlist persist across runs.
+- **Session restore**: tabs, bookmarks, recent folders, thumbnail size, panel state, the playlist, and saved playlists persist across runs.
 
 ## Portable builds
 
@@ -127,17 +159,29 @@ the executable at compile time.
 - `src-tauri/src/fsops.rs` — directory listings, places/drives, previews, clipboard, copy/move/delete,
   folder creation, renaming, and filesystem watching (`fs:changed`).
 - `src-tauri/src/thumbs.rs` — hash-keyed thumbnail cache, image decoding with orientation, Windows shell
-  thumbnails, and Linux `ffmpeg`/`pdftoppm` helpers. Served through the `thumb://` / `http://thumb.localhost`
-  protocol with immutable cache headers.
+  thumbnails, model renders for `.stl`/`.obj`/`.ply`/`.3mf`, and Linux `ffmpeg`/`pdftoppm` helpers. Served
+  through the `thumb://` / `http://thumb.localhost` protocol with immutable cache headers.
 - `src-tauri/src/viz.rs` — bounded recursive folder scan with progress events and generation-based
   cancellation; returns a pruned tree, largest files, and extension statistics.
 - `src-tauri/src/search.rs` — fuzzy, gitignore-aware recursive filename search.
 - `src-tauri/src/shellmenu.rs` — Windows shell `IContextMenu` enumeration and invocation behind the System Menu.
+- `src-tauri/src/network.rs` — shared-folder discovery for the sidebar: `WNetEnumResourceW` for the browse
+  list and the shell Network folder for the machines Windows discovers by itself. Both run on their own
+  threads with a time budget, because a machine that is offline can stall either call for minutes.
 - `src-tauri/src/fonts.rs` — streams `.ttf`/`.otf`/`.woff`/`.woff2` bytes with the right media type over the
   `font://` / `http://font.localhost` protocol so the UI can register them as live `FontFace` specimens.
 - `src-tauri/src/settings.rs` — atomic JSON settings/session storage.
+- `src-tauri/src/mesh.rs` — mesh parsing for OBJ, STL (ASCII and binary), PLY (ASCII and binary), 3MF
+  (its own ZIP + XML reader) and glTF/GLB/OFF: flat triangle lists for the renderer, bounding-box extents
+  for the Details column, and sampled triangle corners streamed to the preview viewer as a binary payload.
+- `src-tauri/src/render.rs` — the software rasterizer behind model thumbnails: orthographic fit, a 2×
+  supersampled z-buffer, two-sided Lambert shading and depth fade, so a thumbnail needs no shell handler or GPU.
+- `src-tauri/src/archive.rs` — header-only archive summaries for the cards, preview pane and Details column:
+  ZIP central directory (including Zip64), TAR block headers, gzip/bzip2-decompressed tar streams, plain
+  gzip/bzip2, and RAR 4/5 block walks. It also votes on a content type from entry extensions.
 - `ui/js/` — the application: `files.js` (rendering, selection, lazy thumbnails), `fonts.js` (font specimens),
-  `viz.js` (treemap), `preview.js`, `ops.js`, `palette.js`, `settings.js`, and `main.js` (navigation, tabs, shortcuts).
+  `details.js` (the smart Details column), `model.js` (rotating WebGL model preview), `viz.js` (treemap),
+  `preview.js`, `ops.js`, `palette.js`, `settings.js`, and `main.js` (navigation, tabs, shortcuts).
 
 Data locations:
 

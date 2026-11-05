@@ -10,6 +10,7 @@ const ICONS = {
   music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
   video: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="m10 9 5 3-5 3z" fill="currentColor" stroke="none"/>',
   drive: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 12h18"/><circle cx="7" cy="15.5" r=".8" fill="currentColor" stroke="none"/><circle cx="10.5" cy="15.5" r=".8" fill="currentColor" stroke="none"/>',
+  network: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 3.2 2.6 14.8 0 18M12 3c-2.6 3.2-2.6 14.8 0 18"/>',
   bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
@@ -32,12 +33,14 @@ const ICONS = {
   cut: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 20 18M8 15.5 20 6"/>',
   clipboard: '<rect x="5" y="4" width="14" height="18" rx="2"/><path d="M9 4V2.5h6V4"/>',
   external: '<path d="M14 3h7v7M21 3l-9 9M18 14v6H4V6h6"/>',
+  open: '<path d="M4 10V6a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/><path d="M14 4v6h6"/><path d="M3 15h7m-3-3 3 3-3 3"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.8" r=".9" fill="currentColor" stroke="none"/>',
   file: '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/>',
   code: '<path d="m8 8-4 4 4 4M16 8l4 4-4 4"/>',
   archive: '<rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/>',
   terminal: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/>',
   font: '<path d="M5 19 12 5l7 14M8 14h8"/>',
+  cube: '<path d="m12 2.8 8 4.4v9.6l-8 4.4-8-4.4V7.2z"/><path d="M12 11.6 4 7.2M12 11.6l8-4.4M12 11.6v9.6"/>',
   check: '<path d="m5 12 5 5L20 7"/>',
   alert: '<path d="M10.3 4.2 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 9v5M12 17.5h.01"/>',
   loader: '<path d="M12 3a9 9 0 1 0 9 9"/>',
@@ -62,6 +65,7 @@ const ICONS = {
   dot: '<circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>',
   arrowUpRight: '<path d="M7 17 17 7M9 7h8v8"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2"/>',
 };
 
 const KIND_ICON = {
@@ -73,7 +77,9 @@ const KIND_ICON = {
   doc: 'fileText',
   archive: 'archive',
   exe: 'terminal',
+  shortcut: 'link',
   font: 'font',
+  model: 'cube',
   file: 'file',
   other: 'layers',
 };

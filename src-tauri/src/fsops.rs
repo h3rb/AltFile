@@ -1,10 +1,10 @@
 use crate::{paths, AppState};
+use notify::Watcher;
 use serde::Serialize;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, UNIX_EPOCH};
-use notify::Watcher;
 use tauri::{Emitter, Manager, State};
 
 const MAX_ENTRIES: usize = 20_000;
@@ -240,8 +240,18 @@ pub fn list_places(app: tauri::AppHandle) -> Vec<Place> {
 
     push("home", "Home", resolver.home_dir().ok(), "quick");
     push("desktop", "Desktop", resolver.desktop_dir().ok(), "quick");
-    push("documents", "Documents", resolver.document_dir().ok(), "quick");
-    push("downloads", "Downloads", resolver.download_dir().ok(), "quick");
+    push(
+        "documents",
+        "Documents",
+        resolver.document_dir().ok(),
+        "quick",
+    );
+    push(
+        "downloads",
+        "Downloads",
+        resolver.download_dir().ok(),
+        "quick",
+    );
     push("pictures", "Pictures", resolver.picture_dir().ok(), "quick");
     push("music", "Music", resolver.audio_dir().ok(), "quick");
     push("videos", "Videos", resolver.video_dir().ok(), "quick");
@@ -333,13 +343,36 @@ fn system_drives() -> Vec<Place> {
 #[cfg(target_os = "linux")]
 fn system_drives() -> Vec<Place> {
     fn unescape_mount(s: &str) -> String {
-        s.replace("\\040", " ").replace("\\011", "\t").replace("\\012", "\n")
+        s.replace("\\040", " ")
+            .replace("\\011", "\t")
+            .replace("\\012", "\n")
     }
 
     const PSEUDO: &[&str] = &[
-        "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "cgroup", "cgroup2", "pstore", "bpf",
-        "tracefs", "debugfs", "securityfs", "configfs", "fusectl", "mqueue", "hugetlbfs",
-        "ramfs", "overlay", "squashfs", "autofs", "rpc_pipefs", "nsfs", "efivarfs", "fuse.gvfsd-fuse",
+        "proc",
+        "sysfs",
+        "devtmpfs",
+        "devpts",
+        "tmpfs",
+        "cgroup",
+        "cgroup2",
+        "pstore",
+        "bpf",
+        "tracefs",
+        "debugfs",
+        "securityfs",
+        "configfs",
+        "fusectl",
+        "mqueue",
+        "hugetlbfs",
+        "ramfs",
+        "overlay",
+        "squashfs",
+        "autofs",
+        "rpc_pipefs",
+        "nsfs",
+        "efivarfs",
+        "fuse.gvfsd-fuse",
     ];
 
     let mut out = vec![Place {
@@ -541,14 +574,22 @@ pub fn text_preview(path: String, max_bytes: Option<u64>) -> Result<TextPreview,
             .chunks_exact(2)
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
-        (String::from_utf16_lossy(&units), false, "utf-16le".to_string())
+        (
+            String::from_utf16_lossy(&units),
+            false,
+            "utf-16le".to_string(),
+        )
     } else if buf.starts_with(&[0xFE, 0xFF]) {
         let body = &buf[2..];
         let units: Vec<u16> = body
             .chunks_exact(2)
             .map(|c| u16::from_be_bytes([c[0], c[1]]))
             .collect();
-        (String::from_utf16_lossy(&units), false, "utf-16be".to_string())
+        (
+            String::from_utf16_lossy(&units),
+            false,
+            "utf-16be".to_string(),
+        )
     } else {
         let body = if buf.starts_with(&[0xEF, 0xBB, 0xBF]) {
             &buf[3..]
@@ -565,7 +606,11 @@ pub fn text_preview(path: String, max_bytes: Option<u64>) -> Result<TextPreview,
         if binary {
             (String::new(), true, "binary".to_string())
         } else {
-            (String::from_utf8_lossy(body).into_owned(), false, "utf-8".to_string())
+            (
+                String::from_utf8_lossy(body).into_owned(),
+                false,
+                "utf-8".to_string(),
+            )
         }
     };
 
@@ -788,7 +833,11 @@ fn validate_name(name: &str) -> Result<&str, String> {
     if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains('\0') {
         return Err("Name cannot contain path separators".into());
     }
-    if cfg!(windows) && trimmed.chars().any(|c| "<>:\"|?*".contains(c) || (c as u32) < 32) {
+    if cfg!(windows)
+        && trimmed
+            .chars()
+            .any(|c| "<>:\"|?*".contains(c) || (c as u32) < 32)
+    {
         return Err("Name contains characters Windows does not allow".into());
     }
     Ok(trimmed)

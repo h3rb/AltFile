@@ -1,8 +1,8 @@
 import { api, mediaUrl } from './api.js';
 import { state, scheduleSave, mediaKindOf } from './state.js';
 import { icon } from './icons.js';
-import { esc, basename, dirname, clamp, fmtDuration } from './util.js';
-import { toast } from './dialogs.js';
+import { esc, basename, dirname, clamp, fmtDuration, uid } from './util.js';
+import { toast, showMenu, promptDialog, confirmDialog } from './dialogs.js';
 
 const AUDIO = 'audio';
 const VIDEO = 'video';
@@ -17,10 +17,123 @@ let artToken = 0;
 let userInitiated = false;
 let suppressError = false;
 let pendingSeek = null;
+let audioCtx = null;
+let analyser = null;
+let freqData = null;
+let beatLevel = 0;
+let beatAvg = 0;
+let lastBeatAt = 0;
+let pulseFrame = 0;
+const playbackListeners = new Set();
 
 function current() {
   const index = state.media.index;
   return index >= 0 ? state.media.queue[index] || null : null;
+}
+
+function playbackSnapshot() {
+  const item = current();
+  return {
+    path: item ? item.path : null,
+    playing: Boolean(engine && !engine.paused && !engine.ended),
+    time: engine ? Number(engine.currentTime) || 0 : 0,
+    duration,
+  };
+}
+
+function notifyPlayback() {
+  if (!playbackListeners.size) return;
+  const snapshot = playbackSnapshot();
+  for (const listener of playbackListeners) {
+    try {
+      listener(snapshot);
+    } catch {
+      /* a preview listener must not break playback */
+    }
+  }
+}
+
+export function onPlayback(listener) {
+  playbackListeners.add(listener);
+  listener(playbackSnapshot());
+  return () => playbackListeners.delete(listener);
+}
+
+function ensureAnalyser() {
+  if (analyser) return true;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return false;
+  try {
+    audioCtx = new Ctx();
+    const source = audioCtx.createMediaElementSource(engine);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.45;
+    freqData = new Uint8Array(analyser.frequencyBinCount);
+    source.connect(analyser);
+    analyser.connect(audioCtx.destination);
+    return true;
+  } catch {
+    analyser = null;
+    return false;
+  }
+}
+
+function setBeat(value) {
+  beatLevel = value;
+  document.documentElement.style.setProperty('--beat', value.toFixed(3));
+}
+
+function stopPulse() {
+  if (pulseFrame) cancelAnimationFrame(pulseFrame);
+  pulseFrame = 0;
+  beatAvg = 0;
+  lastBeatAt = 0;
+  setBeat(0);
+}
+
+export function startPulse() {
+  if (pulseFrame || !engine) return;
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  if (!ensureAnalyser()) return;
+  audioCtx?.resume?.().catch(() => {});
+  const tick = () => {
+    if (!engine || engine.paused || engine.ended || engine.muted || engine.volume === 0) {
+      pulseFrame = 0;
+      setBeat(0);
+      return;
+    }
+    analyser.getByteFrequencyData(freqData);
+    let sum = 0;
+    for (let i = 1; i <= 5; i += 1) sum += freqData[i];
+    const energy = sum / (5 * 255);
+    const now = performance.now();
+    if (
+      now - lastBeatAt > 110 &&
+      energy > 0.14 &&
+      energy > beatAvg * 1.4 + 0.02
+    ) {
+      lastBeatAt = now;
+      beatLevel = Math.min(1, 0.5 + energy);
+    }
+    beatAvg += (energy - beatAvg) * 0.07;
+    setBeat(beatLevel);
+    beatLevel *= 0.9;
+    pulseFrame = requestAnimationFrame(tick);
+  };
+  pulseFrame = requestAnimationFrame(tick);
+}
+
+export function seekPlayback(seconds) {
+  if (!engine || !current() || !Number.isFinite(seconds)) return false;
+  const max = Number.isFinite(engine.duration) && engine.duration > 0 ? engine.duration : duration;
+  try {
+    engine.currentTime = clamp(seconds, 0, max || seconds);
+  } catch {
+    return false;
+  }
+  notifyPlayback();
+  return true;
 }
 
 function itemFor(entry) {
@@ -167,6 +280,7 @@ function playIndex(index, { autoplay = true, user = true, startAt = null } = {})
     updatePlayButton();
   }
   scheduleSave();
+  notifyPlayback();
 }
 
 export function playEntry(entry, { autoplay = true, startAt = null } = {}) {
@@ -218,6 +332,146 @@ export function addToPlaylist(entries) {
   return added;
 }
 
+function copyQueue() {
+  return state.media.queue.map((item) => ({ path: item.path, name: item.name, kind: item.kind }));
+}
+
+function playlistNamed(name) {
+  const key = name.toLowerCase();
+  return state.playlists.find((playlist) => playlist.name.toLowerCase() === key) || null;
+}
+
+function nextPlaylistName() {
+  let index = state.playlists.length + 1;
+  while (playlistNamed(`Playlist ${index}`)) index += 1;
+  return `Playlist ${index}`;
+}
+
+function mergeIntoPlaylist(playlist) {
+  const seen = new Set(playlist.items.map((item) => item.path.toLowerCase()));
+  let added = 0;
+  for (const item of state.media.queue) {
+    if (seen.has(item.path.toLowerCase())) continue;
+    seen.add(item.path.toLowerCase());
+    playlist.items.push({ path: item.path, name: item.name, kind: item.kind });
+    added += 1;
+  }
+  if (!added) {
+    toast(`Everything is already in “${playlist.name}”`, { type: 'info', icon: 'playlist' });
+    return;
+  }
+  playlist.updatedAt = Date.now();
+  scheduleSave();
+  toast(`Saved ${added} item${added === 1 ? '' : 's'} to “${playlist.name}”`, { type: 'success', icon: 'playlist' });
+}
+
+async function savePlaylistAs() {
+  if (!state.media.queue.length) {
+    toast('The playlist is empty — add some audio or video first', { type: 'info', icon: 'playlist' });
+    return;
+  }
+  const name = await promptDialog({
+    title: 'Save playlist',
+    label: 'Playlist name',
+    value: nextPlaylistName(),
+    confirmLabel: 'Save',
+    hint: 'Saved playlists persist with your settings and can be reopened from the player.',
+  });
+  if (!name) return;
+  const trimmed = name.slice(0, 80);
+  const existing = playlistNamed(trimmed);
+  if (existing) {
+    const replace = await confirmDialog({
+      title: 'Replace playlist',
+      message: `A playlist named “${existing.name}” already exists. Replace its contents with the current playlist?`,
+      confirmLabel: 'Replace',
+    });
+    if (!replace) return;
+    existing.items = copyQueue();
+    existing.updatedAt = Date.now();
+    scheduleSave();
+    toast(`Replaced “${existing.name}”`, { type: 'success', icon: 'playlist' });
+    return;
+  }
+  state.playlists.push({ id: uid(), name: trimmed, items: copyQueue(), updatedAt: Date.now() });
+  scheduleSave();
+  toast(`Saved “${trimmed}”`, { type: 'success', icon: 'playlist' });
+}
+
+export function showSavePlaylistMenu(anchor) {
+  if (!state.media.queue.length) {
+    toast('The playlist is empty — add some audio or video first', { type: 'info', icon: 'playlist' });
+    return;
+  }
+  if (!state.playlists.length) {
+    savePlaylistAs();
+    return;
+  }
+  const rect = anchor.getBoundingClientRect();
+  showMenu({
+    x: rect.left,
+    y: rect.top,
+    items: [
+      ...state.playlists.map((playlist) => ({
+        label: playlist.name,
+        icon: 'playlist',
+        shortcut: String(playlist.items.length),
+        onClick: () => mergeIntoPlaylist(playlist),
+      })),
+      { separator: true },
+      { label: 'Save as new playlist…', icon: 'plus', onClick: () => savePlaylistAs() },
+    ],
+  });
+}
+
+function openPlaylist(playlist) {
+  if (!playlist.items.length) {
+    toast(`“${playlist.name}” is empty`, { type: 'info', icon: 'playlist' });
+    return;
+  }
+  state.media.queue = playlist.items.map((item) => ({ ...item }));
+  state.media.index = 0;
+  playIndex(0, { autoplay: false, user: false });
+  queueOpen = true;
+  updateQueue();
+}
+
+async function deletePlaylist(playlist) {
+  const ok = await confirmDialog({
+    title: 'Delete playlist',
+    message: `Delete “${playlist.name}” from your saved playlists?`,
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+  state.playlists = state.playlists.filter((item) => item.id !== playlist.id);
+  scheduleSave();
+  toast(`Deleted “${playlist.name}”`, { type: 'info', icon: 'playlist' });
+}
+
+export function showOpenPlaylistsMenu(anchor) {
+  if (!state.playlists.length) {
+    toast('No saved playlists yet — save the current playlist first', { type: 'info', icon: 'playlist' });
+    return;
+  }
+  const rect = anchor.getBoundingClientRect();
+  showMenu({
+    x: rect.left,
+    y: rect.top,
+    items: state.playlists.map((playlist) => ({
+      label: playlist.name,
+      icon: 'playlist',
+      shortcut: String(playlist.items.length),
+      submenu: [
+        { label: 'Open playlist', icon: 'play', onClick: () => openPlaylist(playlist) },
+        { label: 'Add to current playlist', icon: 'plus', onClick: () => addToPlaylist(playlist.items) },
+        { separator: true },
+        { label: 'Delete playlist', icon: 'trash', danger: true, onClick: () => deletePlaylist(playlist) },
+      ],
+    })),
+  });
+}
+
 export function togglePlay() {
   if (!engine) return;
   if (!current()) {
@@ -253,6 +507,7 @@ function stopPlayback() {
   if (!engine) return;
   suppressError = true;
   pendingSeek = null;
+  stopPulse();
   engine.pause();
   engine.removeAttribute('src');
   engine.load();
@@ -263,6 +518,7 @@ function stopPlayback() {
   bar.hidden = true;
   renderBar();
   scheduleSave();
+  notifyPlayback();
 }
 
 function removeAt(index) {
@@ -344,6 +600,8 @@ export function initPlayer() {
       <div class="player-queue-head">
         <span>Playlist</span>
         <span class="player-queue-meta" data-player-queue-meta></span>
+        <button class="mini-btn" type="button" data-player="open" title="Open a saved playlist">Open</button>
+        <button class="mini-btn" type="button" data-player="save" title="Save the current playlist">Save</button>
         <button class="mini-btn" type="button" data-player="clear">Clear</button>
       </div>
       <div class="player-queue-list" data-player-queue-list></div>
@@ -372,6 +630,7 @@ export function initPlayer() {
   engine.className = 'media-engine';
   engine.preload = 'metadata';
   engine.playsInline = true;
+  engine.crossOrigin = 'anonymous';
   document.body.append(engine);
 
   engine.addEventListener('loadedmetadata', () => {
@@ -385,23 +644,34 @@ export function initPlayer() {
     setDuration(engine.duration);
     paintSeek(duration ? engine.currentTime / duration : 0, engine.currentTime);
     renderBar();
+    notifyPlayback();
   });
-  engine.addEventListener('durationchange', () => setDuration(engine.duration));
+  engine.addEventListener('durationchange', () => {
+    setDuration(engine.duration);
+    notifyPlayback();
+  });
   engine.addEventListener('timeupdate', () => {
     if (!duration) setDuration(engine.duration);
     paintSeek(duration ? engine.currentTime / duration : 0, engine.currentTime);
+    notifyPlayback();
   });
   engine.addEventListener('play', () => {
     state.media.playing = true;
     updatePlayButton();
+    notifyPlayback();
+    startPulse();
   });
   engine.addEventListener('pause', () => {
     state.media.playing = false;
     updatePlayButton();
+    notifyPlayback();
+    stopPulse();
   });
   engine.addEventListener('ended', () => {
     state.media.playing = false;
     updatePlayButton();
+    notifyPlayback();
+    stopPulse();
     if (state.media.index < state.media.queue.length - 1) {
       playIndex(state.media.index + 1, { autoplay: true });
     }
@@ -410,12 +680,17 @@ export function initPlayer() {
     state.media.volume = engine.muted ? state.media.volume : engine.volume;
     state.media.muted = engine.muted;
     updateMuteButton();
+    if (!engine.paused && !engine.ended) {
+      if (engine.muted || engine.volume === 0) stopPulse();
+      else startPulse();
+    }
     scheduleSave();
   });
   engine.addEventListener('error', () => {
     if (suppressError || !current()) return;
     state.media.playing = false;
     updatePlayButton();
+    stopPulse();
     if (userInitiated) {
       const item = current();
       toast(`Can't play “${item.name}” — the format may not be supported.`, { type: 'error' });
@@ -453,6 +728,10 @@ export function initPlayer() {
       } else {
         showQueue();
       }
+    } else if (action === 'open') {
+      showOpenPlaylistsMenu(button);
+    } else if (action === 'save') {
+      showSavePlaylistMenu(button);
     } else if (action === 'clear') {
       state.media.queue = [];
       stopPlayback();
@@ -485,7 +764,7 @@ export function initPlayer() {
   });
 
   document.addEventListener('pointerdown', (event) => {
-    if (!queueOpen || bar.contains(event.target)) return;
+    if (!queueOpen || bar.contains(event.target) || event.target.closest?.('.menu-layer')) return;
     queueOpen = false;
     updateQueue();
   });

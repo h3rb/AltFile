@@ -75,6 +75,15 @@ function settingsHtml() {
       </div>
       <div class="setting-row">
         <div class="setting-main">
+          <div class="setting-label">Search subfolders</div>
+          <div class="setting-desc">When on, the search box scans the current folder and everything inside it. When off, it only filters the files listed here. The scope button next to the search box toggles the same setting.</div>
+        </div>
+        <div class="setting-control">
+          <input type="checkbox" id="settings-search-recursive"${state.searchRecursive ? ' checked' : ''}>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-main">
           <div class="setting-label">Session restore</div>
           <div class="setting-desc">Tabs, bookmarks, recent folders and preferences are saved automatically.</div>
         </div>
@@ -122,7 +131,7 @@ function settingsHtml() {
 
     <div class="settings-group">
       <div class="settings-group-title">About</div>
-      <div class="about-line"><span>Alt File Explorer</span><strong>v${esc(appInfo.version || '0.1.0')}</strong></div>
+      <div class="about-line"><span>Alt File Explorer</span><strong>v${esc(appInfo.version || '0.2.0')}</strong></div>
       <div class="about-line"><span>Platform</span><strong>${esc(appInfo.platform || 'unknown')}</strong></div>
       <div class="about-line"><span>Build</span><strong>Tauri 2 · Rust · system WebView</strong></div>
       <div class="about-line"><span>Mode</span><strong>${appInfo.portable ? 'Portable' : 'Installed'}</strong></div>
@@ -192,6 +201,10 @@ export function openSettings() {
 
   body.querySelector('#settings-hidden')?.addEventListener('change', (event) => {
     app.setShowHidden?.(event.target.checked);
+  });
+
+  body.querySelector('#settings-search-recursive')?.addEventListener('change', (event) => {
+    app.setSearchRecursive?.(event.target.checked);
   });
 
   body.querySelector('#settings-clear-cache')?.addEventListener('click', async () => {
