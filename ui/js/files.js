@@ -4,8 +4,10 @@ import { icon, kindIcon } from './icons.js';
 import { fontTileHtml, observeFontTiles } from './fonts.js';
 import { pageTileHtml, observePageTiles } from './pages.js';
 import { detailCellHtml, observeDetails } from './details.js';
+import { cachedWave, fallbackPeaks, loadWave, drawWaveform } from './waveform.js';
 import {
   esc,
+  basename,
   humanSize,
   humanCount,
   fmtDate,
@@ -17,6 +19,7 @@ import {
   kindLabel,
   kindColor,
   clamp,
+  debounce,
   sumSizes,
 } from './util.js';
 
@@ -72,6 +75,9 @@ const MAX_ARCHIVE_CACHE = 4000;
 const MAX_ARCHIVE_REQUESTS = 2;
 let archiveActive = 0;
 let archiveObserver = null;
+
+let waveObserver = null;
+let waveResizeBound = false;
 
 const scrollEl = () => document.getElementById('files-scroll');
 const paneStateEl = () => document.getElementById('pane-state');
@@ -379,16 +385,25 @@ function cardHtml(entry, index) {
     </article>`;
 }
 
+function rowWaveHtml(entry) {
+  if (entry.kind !== 'audio' || entry.isDir) return '';
+  return `<canvas class="row-wave" aria-hidden="true" data-wave-path="${esc(entry.path)}" data-wave-mtime="${entry.modified || 0}" data-wave-size="${entry.size || 0}" data-wave-ext="${esc(entry.ext || '')}"></canvas>`;
+}
+
 function rowHtml(entry, index) {
   const color = kindColor(entry.kind);
   const classes = ['file-row'];
   if (state.selection.has(entry.path)) classes.push('selected');
   if (state.focusIndex === index) classes.push('focused');
+  const wave = rowWaveHtml(entry);
+  const nameBlock = wave
+    ? `<span class="row-name-wrap">${wave}<span class="row-name">${nameHtml(entry)}</span></span>`
+    : `<span class="row-name">${nameHtml(entry)}</span>`;
   return `
     <div class="${classes.join(' ')}" data-path="${esc(entry.path)}" data-index="${index}" title="${esc(entry.path)}">
       <div class="cell-name">
         <span class="row-icon" style="--kind-color:${color}">${kindIcon(entry.kind, 16)}</span>
-        <span class="row-name">${nameHtml(entry)}</span>
+        ${nameBlock}
         ${entry.isSymlink ? '<span class="symlink-badge">link</span>' : ''}
       </div>
       <div class="cell-size"${entry.isDir ? ` data-size-path="${esc(entry.path)}" data-size-mtime="${entry.modified || 0}"` : ''}>${entry.isDir ? '—' : esc(humanSize(entry.size))}</div>
@@ -592,9 +607,67 @@ export function renderFiles() {
   observePageTiles();
   observeSizes();
   observeDetails();
+  observeRowWaves();
   paintSelection();
   updateStatus();
   app.onSelectionChange?.();
+}
+
+function paintRowWave(canvas) {
+  const path = canvas.dataset.wavePath;
+  if (!path || !canvas.isConnected) return;
+  const entry = {
+    path,
+    name: basename(path),
+    modified: Number(canvas.dataset.waveMtime) || 0,
+  };
+  const size = Number(canvas.dataset.waveSize) || 0;
+  const known = cachedWave(entry, size);
+  drawWaveform(canvas, known ? known.peaks : fallbackPeaks(entry.name), { subtle: true });
+  if (known) return;
+  loadWave(entry, size, canvas.dataset.waveExt)
+    .then((data) => {
+      if (!canvas.isConnected || canvas.dataset.wavePath !== path) return;
+      drawWaveform(canvas, data.peaks, { subtle: true });
+    })
+    .catch(() => {});
+}
+
+function redrawRowWaves() {
+  const scroll = scrollEl();
+  if (!scroll) return;
+  for (const canvas of scroll.querySelectorAll('.row-wave')) {
+    if (!canvas.getBoundingClientRect().width) continue;
+    paintRowWave(canvas);
+  }
+}
+
+function observeRowWaves() {
+  if (!waveResizeBound) {
+    waveResizeBound = true;
+    window.addEventListener('resize', debounce(redrawRowWaves, 160));
+  }
+  if (waveObserver) waveObserver.disconnect();
+  const scroll = scrollEl();
+  if (!scroll) return;
+  const targets = scroll.querySelectorAll('.row-wave');
+  if (!targets.length) return;
+
+  if (!('IntersectionObserver' in window)) {
+    targets.forEach(paintRowWave);
+    return;
+  }
+  waveObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        waveObserver.unobserve(entry.target);
+        paintRowWave(entry.target);
+      }
+    },
+    { root: scroll, rootMargin: '160px 0px' }
+  );
+  targets.forEach((target) => waveObserver.observe(target));
 }
 
 function paintSelection() {

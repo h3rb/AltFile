@@ -5,6 +5,7 @@ import { icon, kindIcon } from './icons.js';
 import { playEntry, addToPlaylist, onPlayback, seekPlayback, isLooping, setLoop } from './player.js';
 import { fontTileHtml, observeFontTiles } from './fonts.js';
 import { wireModelPreview, stopModelPreview, isRotatableModel } from './model.js';
+import { loadWave, drawWaveform } from './waveform.js';
 import {
   esc,
   basename,
@@ -22,11 +23,7 @@ import {
 } from './util.js';
 
 const MEDIA_KINDS = new Set(['audio', 'video']);
-const MAX_WAVE_BYTES = 48 * 1024 * 1024;
-const WAVE_BUCKETS = 460;
 
-const waveformCache = new Map();
-let audioCtx = null;
 let stopPlaybackMirror = null;
 
 function metaRow(key, value, mono = false) {
@@ -224,21 +221,10 @@ function subjectHtml(entry, info, thumb, text, archive) {
     }
   }
 
-  const titleBlock =
-    media && info.kind === 'audio'
-      ? `
-        <div class="preview-title-wrap">
-          <canvas class="preview-title-wave" aria-hidden="true"></canvas>
-          <div class="preview-title">${esc(info.name || entry.name)}</div>
-          <div class="preview-sub">${esc(dirname(info.path) || info.path)}</div>
-        </div>`
-      : `
-        <div class="preview-title">${esc(info.name || entry.name)}</div>
-        <div class="preview-sub">${esc(dirname(info.path) || info.path)}</div>`;
-
   return `
     ${showMedia ? mediaHtml(entry, thumb, info, archive) : ''}
-    ${titleBlock}
+    <div class="preview-title">${esc(info.name || entry.name)}</div>
+    <div class="preview-sub">${esc(dirname(info.path) || info.path)}</div>
     ${textBlock}
     <div class="meta-list">${meta}</div>
     <div class="preview-actions">${actionsHtml(entry, info)}</div>`;
@@ -294,118 +280,6 @@ function teardownMedia(container) {
   }
 }
 
-function getAudioContext() {
-  if (!audioCtx) {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) throw new Error('Web Audio is unavailable');
-    audioCtx = new Ctx();
-  }
-  return audioCtx;
-}
-
-function computePeaks(buffer) {
-  const channel = buffer.getChannelData(0);
-  const buckets = WAVE_BUCKETS;
-  const size = Math.max(1, Math.floor(channel.length / buckets));
-  const peaks = new Float32Array(buckets);
-  let max = 0.0001;
-  for (let b = 0; b < buckets; b += 1) {
-    const start = b * size;
-    const end = Math.min(channel.length, start + size);
-    let peak = 0;
-    for (let i = start; i < end; i += 1) {
-      const value = Math.abs(channel[i]);
-      if (value > peak) peak = value;
-    }
-    peaks[b] = peak;
-    if (peak > max) max = peak;
-  }
-  for (let i = 0; i < buckets; i += 1) peaks[i] /= max;
-  return peaks;
-}
-
-function fallbackPeaks(seed) {
-  const buckets = 120;
-  const peaks = new Float32Array(buckets);
-  let hash = 2166136261;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash ^= seed.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  for (let i = 0; i < buckets; i += 1) {
-    hash ^= hash << 13;
-    hash ^= hash >>> 17;
-    hash ^= hash << 5;
-    const noise = ((hash >>> 0) % 1000) / 1000;
-    const envelope = 0.35 + 0.65 * Math.abs(Math.sin((i / buckets) * Math.PI * 2.4));
-    peaks[i] = 0.12 + noise * 0.55 * envelope;
-  }
-  return peaks;
-}
-
-function drawWaveform(canvas, peaks, { subtle = false } = {}) {
-  const rect = canvas.getBoundingClientRect();
-  const width = Math.max(1, Math.round(rect.width || 276));
-  const height = Math.max(1, Math.round(rect.height || 64));
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  canvas.width = Math.round(width * dpr);
-  canvas.height = Math.round(height * dpr);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-
-  const mid = height / 2;
-  const slot = width / peaks.length;
-  const bar = Math.max(1, slot * (subtle ? 0.9 : 0.62));
-  const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  if (subtle) {
-    gradient.addColorStop(0, themeColor(0.14));
-    gradient.addColorStop(0.5, themeColor(0.22));
-    gradient.addColorStop(1, themeColor(0.1));
-  } else {
-    gradient.addColorStop(0, themeColor(0.92));
-    gradient.addColorStop(0.5, themeColor(0.72));
-    gradient.addColorStop(1, 'rgba(124, 156, 255, 0.8)');
-  }
-  ctx.fillStyle = gradient;
-  for (let i = 0; i < peaks.length; i += 1) {
-    const amp = Math.max(1, peaks[i] * (mid - (subtle ? 1 : 3)));
-    const x = i * slot + (slot - bar) / 2;
-    ctx.fillRect(x, mid - amp, bar, amp * 2);
-  }
-  if (!subtle) {
-    ctx.fillStyle = 'rgba(148, 163, 184, 0.22)';
-    ctx.fillRect(0, mid, width, 1);
-  }
-}
-
-function readWavFormat(bytes) {
-  if (bytes.byteLength < 44) return null;
-  const view = new DataView(bytes);
-  const tag = (offset) =>
-    String.fromCharCode(
-      view.getUint8(offset),
-      view.getUint8(offset + 1),
-      view.getUint8(offset + 2),
-      view.getUint8(offset + 3)
-    );
-  if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return null;
-  let offset = 12;
-  while (offset + 8 <= view.byteLength) {
-    const id = tag(offset);
-    const size = view.getUint32(offset + 4, true);
-    if (id === 'fmt ' && offset + 16 <= view.byteLength) {
-      return {
-        channels: view.getUint16(offset + 10, true),
-        sampleRate: view.getUint32(offset + 12, true),
-      };
-    }
-    offset += 8 + size + (size % 2);
-  }
-  return null;
-}
-
 function probeDuration(entry, onReady) {
   const probe = new Audio();
   probe.preload = 'metadata';
@@ -423,7 +297,6 @@ function probeDuration(entry, onReady) {
 
 async function wireAudioPreview(entry, info, body, token) {
   const canvas = body.querySelector('.audio-wave');
-  const titleCanvas = body.querySelector('.preview-title-wave');
   const statusEl = body.querySelector('[data-audio-state]');
   const lengthEl = body.querySelector('[data-audio-length]');
   if (!canvas) return;
@@ -440,49 +313,15 @@ async function wireAudioPreview(entry, info, body, token) {
     );
   });
 
-  const key = `${entry.path.toLowerCase()}|${entry.modified || 0}|${info.size || 0}`;
-  let data = waveformCache.get(key);
-
-  if (!data) {
-    if (info.size > MAX_WAVE_BYTES) {
-      data = { peaks: fallbackPeaks(entry.name), duration: 0, note: 'large' };
-    } else {
-      try {
-        const response = await fetch(mediaUrl(entry.path));
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const bytes = await response.arrayBuffer();
-        if (token !== state.preview.token || !canvas.isConnected) return;
-        const wav = (info.ext || '').toLowerCase() === 'wav' ? readWavFormat(bytes) : null;
-        const buffer = await getAudioContext().decodeAudioData(bytes);
-        data = {
-          peaks: computePeaks(buffer),
-          duration: buffer.duration,
-          sampleRate: wav ? wav.sampleRate : 0,
-          channels: wav ? wav.channels : buffer.numberOfChannels,
-          bitrate: buffer.duration ? (info.size * 8) / buffer.duration : 0,
-        };
-        waveformCache.set(key, data);
-        if (waveformCache.size > 24) {
-          waveformCache.delete(waveformCache.keys().next().value);
-        }
-      } catch {
-        data = { peaks: fallbackPeaks(entry.name), duration: 0, note: 'unavailable' };
-      }
-    }
-  }
-
+  const data = await loadWave(entry, info.size || 0, info.ext);
   if (token !== state.preview.token || !canvas.isConnected) return;
 
+  const bitrate = data.duration ? (info.size * 8) / data.duration : 0;
   seekDuration = data.duration || 0;
   drawWaveform(canvas, data.peaks);
-  if (titleCanvas) drawWaveform(titleCanvas, data.peaks, { subtle: true });
   if (typeof ResizeObserver === 'function') {
-    const observer = new ResizeObserver(() => {
-      drawWaveform(canvas, data.peaks);
-      if (titleCanvas?.isConnected) drawWaveform(titleCanvas, data.peaks, { subtle: true });
-    });
+    const observer = new ResizeObserver(() => drawWaveform(canvas, data.peaks));
     observer.observe(canvas);
-    if (titleCanvas) observer.observe(titleCanvas);
   }
 
   if (data.duration) {
@@ -499,8 +338,8 @@ async function wireAudioPreview(entry, info, body, token) {
       data.channels === 1 ? 'Mono' : data.channels === 2 ? 'Stereo' : `${data.channels} channels`
     );
   }
-  if (data.bitrate) {
-    setMetaField(body, 'bitrate', `${Math.round(data.bitrate / 1000)} kbps`);
+  if (bitrate) {
+    setMetaField(body, 'bitrate', `${Math.round(bitrate / 1000)} kbps`);
   }
 
   if (statusEl) {

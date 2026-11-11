@@ -58,8 +58,8 @@ treemap visualization of any folder — and it builds as a portable executable f
   WebGL view instead of a static poster, so the shape can be inspected without leaving the app. Rotation can
   be turned off in **Settings → Appearance → Rotate 3D models**, which freezes the current three-quarter view.
 - **Media previews and playlist**: audio waveforms with duration, bitrate, sample rate, and channels
-  (click the waveform to start playback at that point), plus a faint waveform drawn behind the file name
-  in the preview details; video frame previews with hover scrubbing over
+  (click the waveform to start playback at that point), while list view draws a faint waveform behind the
+  name of each audio file; video frame previews with hover scrubbing over
   the timeline; and a persistent player with a queue you can fill from the preview pane, context menu,
   or command palette (`Space` toggles playback). When the file open in the preview is playing, the
   preview's own video follows the player — starting, pausing, and staying in sync — and scrubbing the
