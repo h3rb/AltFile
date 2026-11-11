@@ -5,6 +5,7 @@ import { icon } from './icons.js';
 import { applyThemeHue, esc, humanSize, humanCount, clamp, debounce } from './util.js';
 import { renderFiles } from './files.js';
 import { setModelSpin } from './model.js';
+import { setLoop } from './player.js';
 import { renderViz } from './viz.js';
 
 const SHORTCUTS = [
@@ -77,6 +78,28 @@ function settingsHtml() {
           <input type="checkbox" id="settings-model-spin"${state.modelSpin ? ' checked' : ''}>
         </div>
       </div>
+      <div class="setting-row">
+        <div class="setting-main">
+          <div class="setting-label">Playlists in sidebar</div>
+          <div class="setting-desc">Show saved playlists under Bookmarks in the left panel. Click one to open it in the player.</div>
+        </div>
+        <div class="setting-control">
+          <input type="checkbox" id="settings-show-playlists"${state.showPlaylists ? ' checked' : ''}>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <div class="settings-group-title">Playback</div>
+      <div class="setting-row">
+        <div class="setting-main">
+          <div class="setting-label">Loop playback</div>
+          <div class="setting-desc">Repeat the current audio or video file when it ends instead of moving to the next item. The Loop button in the preview actions and player bar toggles the same setting.</div>
+        </div>
+        <div class="setting-control">
+          <input type="checkbox" id="settings-media-loop"${state.media.loop ? ' checked' : ''}>
+        </div>
+      </div>
     </div>
 
     <div class="settings-group">
@@ -107,6 +130,20 @@ function settingsHtml() {
         <div class="setting-control"><span class="nav-meta">Always on</span></div>
       </div>
     </div>
+
+    ${appInfo.platform === 'windows' ? `
+    <div class="settings-group">
+      <div class="settings-group-title">Windows integration</div>
+      <div class="setting-row">
+        <div class="setting-main">
+          <div class="setting-label">File Explorer context menu</div>
+          <div class="setting-desc">Adds <strong>Explore in AltFile</strong> to the right-click menu for folders. It opens AltFile at that folder, or focuses the open window and navigates it there.</div>
+        </div>
+        <div class="setting-control">
+          <button class="mini-btn" id="settings-install-menu" type="button">${icon('external', 12)} Add AltFile Context Menu Items</button>
+        </div>
+      </div>
+    </div>` : ''}
 
     <div class="settings-group">
       <div class="settings-group-title">Visualizer</div>
@@ -233,6 +270,16 @@ export function openSettings() {
     setModelSpin(event.target.checked);
   });
 
+  body.querySelector('#settings-media-loop')?.addEventListener('change', (event) => {
+    setLoop(event.target.checked);
+  });
+
+  body.querySelector('#settings-show-playlists')?.addEventListener('change', (event) => {
+    state.showPlaylists = event.target.checked;
+    scheduleSave();
+    app.renderSidebar?.();
+  });
+
   body.querySelector('#settings-hidden')?.addEventListener('change', (event) => {
     app.setShowHidden?.(event.target.checked);
   });
@@ -263,6 +310,19 @@ export function openSettings() {
   body.querySelector('#settings-open-data')?.addEventListener('click', () => {
     if (state.app?.dataDir) {
       api.openPath(state.app.dataDir).catch((error) => toast(String(error), { type: 'error' }));
+    }
+  });
+
+  body.querySelector('#settings-install-menu')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const label = await api.installExplorerMenu();
+      toast(`Added "${label}" to the File Explorer folder menu`, { type: 'success', icon: 'check' });
+    } catch (error) {
+      toast(String(error), { type: 'error' });
+    } finally {
+      button.disabled = false;
     }
   });
 

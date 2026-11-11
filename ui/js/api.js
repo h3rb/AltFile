@@ -65,6 +65,8 @@ export const api = {
     invoke('search_files', { path, query, limit, includeHidden }),
   loadSettings: () => invoke('load_settings'),
   saveSettings: (settings) => invoke('save_settings', { settings }),
+  takeLaunchPath: () => invoke('take_launch_path'),
+  installExplorerMenu: () => invoke('install_explorer_menu'),
 };
 
 export function listen(event, handler) {

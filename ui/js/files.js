@@ -27,7 +27,7 @@ const PAGE_SIZE = 1500;
 const THUMB_KINDS = new Set(['image', 'video', 'audio', 'exe', 'shortcut']);
 const THUMB_MODELS = new Set(['stl', 'obj', 'ply', '3mf']);
 const NO_DOC_THUMB = new Set(['txt', 'md', 'markdown', 'log', 'csv', 'tsv', 'rtf']);
-const ARCHIVE_EXTS = new Set(['zip', 'rar', 'tar', 'gz', 'tgz', 'bz2', 'tbz2', 'tbz']);
+const ARCHIVE_EXTS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'tbz2', 'tbz']);
 
 const FILTERS = [
   { id: 'all', label: 'All', icon: 'layers' },
@@ -308,6 +308,11 @@ function folderTileHtml(entry) {
               <span class="folder-count" data-role="files">${icon('fileText', 14)}<span class="count-value">0</span></span>
             </span>
             <span class="folder-size" data-role="size" hidden></span>
+            <span class="folder-hints" data-role="hints" hidden>
+              <span class="folder-hint" data-role="audio" title="Contains audio" style="color:${kindColor('audio')}">${kindIcon('audio', 13)}</span>
+              <span class="folder-hint" data-role="video" title="Contains video" style="color:${kindColor('video')}">${kindIcon('video', 13)}</span>
+              <span class="folder-hint" data-role="model" title="Contains 3D models" style="color:${kindColor('model')}">${kindIcon('model', 13)}</span>
+            </span>
           </div>
         </div>`;
 }
@@ -818,6 +823,22 @@ function applyCounts(el, counts) {
   set('files', counts.files);
   row.title = `${humanCount(counts.folders)} folders · ${humanCount(counts.files)} files`;
   row.hidden = false;
+
+  const hints = row.querySelector('.folder-hints');
+  if (hints) {
+    let any = false;
+    for (const [role, present] of [
+      ['audio', counts.hasAudio],
+      ['video', counts.hasVideo],
+      ['model', counts.hasModel],
+    ]) {
+      const hint = hints.querySelector(`[data-role="${role}"]`);
+      if (!hint) continue;
+      hint.hidden = !present;
+      if (present) any = true;
+    }
+    hints.hidden = !any;
+  }
 }
 
 function pumpCounts() {

@@ -37,6 +37,9 @@ pub struct Listing {
 pub struct FolderCounts {
     pub folders: u64,
     pub files: u64,
+    pub has_audio: bool,
+    pub has_video: bool,
+    pub has_model: bool,
 }
 
 #[derive(Serialize)]
@@ -133,6 +136,9 @@ pub fn folder_counts(path: String, show_hidden: bool) -> Result<FolderCounts, St
 
     let mut folders = 0u64;
     let mut files = 0u64;
+    let mut has_audio = false;
+    let mut has_video = false;
+    let mut has_model = false;
 
     for item in read {
         let item = match item {
@@ -159,10 +165,22 @@ pub fn folder_counts(path: String, show_hidden: bool) -> Result<FolderCounts, St
             folders += 1;
         } else {
             files += 1;
+            match paths::classify(&paths::ext_of(&name), false) {
+                "audio" => has_audio = true,
+                "video" => has_video = true,
+                "model" => has_model = true,
+                _ => {}
+            }
         }
     }
 
-    Ok(FolderCounts { folders, files })
+    Ok(FolderCounts {
+        folders,
+        files,
+        has_audio,
+        has_video,
+        has_model,
+    })
 }
 
 const SIZE_ENTRY_CAP: u64 = 300_000;

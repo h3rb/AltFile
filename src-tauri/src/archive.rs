@@ -42,6 +42,7 @@ enum Format {
     Gz,
     Bz2,
     Rar,
+    SevenZ,
 }
 
 fn format_of(name: &str) -> Option<Format> {
@@ -58,6 +59,7 @@ fn format_of(name: &str) -> Option<Format> {
         "gz" => Some(Format::Gz),
         "bz2" => Some(Format::Bz2),
         "rar" => Some(Format::Rar),
+        "7z" => Some(Format::SevenZ),
         _ => None,
     }
 }
@@ -71,6 +73,7 @@ fn format_label(format: Format) -> &'static str {
         Format::Gz => "GZ",
         Format::Bz2 => "BZ2",
         Format::Rar => "RAR",
+        Format::SevenZ => "7Z",
     }
 }
 
@@ -609,6 +612,26 @@ fn read_rar5(file: &mut File, col: &mut Collector) -> Option<()> {
     }
 }
 
+fn read_7z(path: &Path, col: &mut Collector) -> Option<()> {
+    let file = File::open(path).ok()?;
+    let reader = sevenz_rust2::ArchiveReader::new_with_memory_limit(
+        BufReader::new(file),
+        sevenz_rust2::Password::empty(),
+        64 * 1024,
+    )
+    .ok()?;
+    for entry in &reader.archive().files {
+        if entry.is_anti_item {
+            continue;
+        }
+        let size = if entry.is_directory { 0 } else { entry.size };
+        if !col.add(&entry.name, entry.is_directory, size) {
+            break;
+        }
+    }
+    Some(())
+}
+
 fn read_vint_file(file: &mut File) -> Option<u64> {
     let mut value = 0u64;
     let mut shift = 0;
@@ -688,6 +711,7 @@ pub fn summarize(path: &Path) -> Option<Summary> {
         Format::Gz => sniffed_tar = read_gz(File::open(path).ok()?, &mut col, &fallback),
         Format::Bz2 => sniffed_tar = read_bz2(File::open(path).ok()?, &mut col, &fallback),
         Format::Rar => read_rar(&mut File::open(path).ok()?, &mut col)?,
+        Format::SevenZ => read_7z(path, &mut col)?,
     }
     if col.entries == 0 && matches!(format, Format::Rar) {
         return None;
@@ -902,6 +926,103 @@ mod tests {
         out
     }
 
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for &byte in bytes {
+            crc ^= byte as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    fn sevenz_number(value: u64) -> Vec<u8> {
+        let mut first = 0u8;
+        let mut extra = 0;
+        while extra < 8 {
+            if value < (1u64 << (7 * (extra + 1))) {
+                first |= (value >> (8 * extra)) as u8;
+                break;
+            }
+            first |= 0x80 >> extra;
+            extra += 1;
+        }
+        let mut out = vec![first];
+        for index in 0..extra {
+            out.push((value >> (8 * index)) as u8);
+        }
+        out
+    }
+
+    fn sevenz_bytes() -> Vec<u8> {
+        let names = ["docs", "docs/readme.txt", "empty.txt"];
+        let payload = b"hello world";
+
+        let mut header = vec![0x01]; // kHeader
+        header.push(0x04); // kMainStreamsInfo
+        header.push(0x06); // kPackInfo
+        header.extend(sevenz_number(0)); // pack position
+        header.extend(sevenz_number(1)); // pack stream count
+        header.push(0x09); // kSize
+        header.extend(sevenz_number(payload.len() as u64));
+        header.push(0x00); // end pack info
+
+        header.push(0x07); // kUnpackInfo
+        header.push(0x0B); // kFolder
+        header.extend(sevenz_number(1)); // folder count
+        header.push(0x00); // folders are inline
+        header.extend(sevenz_number(1)); // coder count
+        header.push(0x01); // one-byte codec id, simple coder, no attributes
+        header.push(0x00); // Copy method
+        header.push(0x0C); // kCodersUnpackSize
+        header.extend(sevenz_number(payload.len() as u64));
+        header.push(0x00); // end unpack info
+
+        header.push(0x08); // kSubStreamsInfo
+        header.push(0x00); // end sub streams info
+        header.push(0x00); // end main streams info
+
+        let mut name_data = vec![0x00]; // names are inline
+        for name in names {
+            for unit in name.encode_utf16() {
+                name_data.extend_from_slice(&unit.to_le_bytes());
+            }
+            name_data.extend_from_slice(&[0, 0]);
+        }
+
+        header.push(0x05); // kFilesInfo
+        header.extend(sevenz_number(names.len() as u64));
+        header.push(0x0E); // kEmptyStream
+        header.push(0x01); // one byte of bits
+        header.push(0xA0); // docs and empty.txt have no stream (most significant bit first)
+        header.push(0x0F); // kEmptyFile
+        header.push(0x01);
+        header.push(0x40); // empty.txt is a file, docs is a folder
+        header.push(0x11); // kName
+        header.extend(sevenz_number(name_data.len() as u64));
+        header.extend_from_slice(&name_data);
+        header.push(0x00); // end files info
+        header.push(0x00); // end header
+
+        let mut tail = Vec::new();
+        tail.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+        tail.extend_from_slice(&(header.len() as u64).to_le_bytes());
+        tail.extend_from_slice(&crc32(&header).to_le_bytes());
+
+        let mut out = b"7z\xBC\xAF\x27\x1C".to_vec();
+        out.extend_from_slice(&[0x00, 0x04]);
+        out.extend_from_slice(&crc32(&tail).to_le_bytes());
+        out.extend_from_slice(&tail);
+        out.extend_from_slice(payload);
+        out.extend_from_slice(&header);
+        out
+    }
+
     #[test]
     fn recognizes_compound_extensions() {
         assert!(matches!(format_of("a.tar.gz"), Some(Format::TarGz)));
@@ -910,7 +1031,7 @@ mod tests {
         assert!(matches!(format_of("a.tbz2"), Some(Format::TarBz2)));
         assert!(matches!(format_of("a.zip"), Some(Format::Zip)));
         assert!(matches!(format_of("a.rar"), Some(Format::Rar)));
-        assert!(format_of("a.7z").is_none());
+        assert!(matches!(format_of("a.7z"), Some(Format::SevenZ)));
     }
 
     #[test]
@@ -1023,6 +1144,19 @@ mod tests {
         assert_eq!(summary.bytes, 3072);
         assert_eq!(summary.kind, "Media Files");
         assert_eq!(summary.top[0], "clip.mp4");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn summarizes_sevenz_entries() {
+        let path = temp_file("sample.7z", &sevenz_bytes());
+        let summary = summarize(&path).unwrap();
+        assert_eq!(summary.format, "7Z");
+        assert_eq!(summary.files, 2);
+        assert_eq!(summary.folders, 1);
+        assert_eq!(summary.bytes, 11);
+        assert_eq!(summary.kind, "Documents");
+        assert_eq!(summary.top, vec!["docs", "docs/readme.txt", "empty.txt"]);
         let _ = fs::remove_file(path);
     }
 

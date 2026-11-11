@@ -43,9 +43,24 @@ function shareHost(path) {
   return String(path || '').replace(/^\\+/, '').split(/[\\/]/)[0] || '';
 }
 
+function playlistItem(playlist) {
+  const active = playlist.id === state.selectedPlaylistId;
+  const count = playlist.items.length;
+  return `
+    <div class="drive-wrap">
+      <button class="nav-item${active ? ' active' : ''}" type="button" data-playlist-id="${esc(playlist.id)}" title="${esc(playlist.name)} — ${count} item${count === 1 ? '' : 's'}">
+        ${icon('playlist', 15)}
+        <span class="nav-name">${esc(playlist.name)}</span>
+        <span class="nav-meta">${count}</span>
+      </button>
+    </div>`;
+}
+
 export function renderSidebar() {
   const quick = document.getElementById('quick-nav');
   const bookmarkList = document.getElementById('bookmark-list');
+  const playlistNav = document.getElementById('playlist-nav');
+  const playlistList = document.getElementById('playlist-list');
   const driveList = document.getElementById('drive-list');
   const networkList = document.getElementById('network-list');
   const rescanBtn = document.getElementById('rescan-network');
@@ -90,6 +105,15 @@ export function renderSidebar() {
         )
         .join('')
     : '<div class="nav-empty">Use the + button to pin a folder here.</div>';
+
+  if (playlistNav && playlistList) {
+    playlistNav.toggleAttribute('hidden', !state.showPlaylists);
+    if (state.showPlaylists) {
+      playlistList.innerHTML = state.playlists.length
+        ? state.playlists.map((playlist) => playlistItem(playlist)).join('')
+        : '<div class="nav-empty">No saved playlists yet.</div>';
+    }
+  }
 
   driveList.innerHTML = drives.length
     ? drives
@@ -136,9 +160,13 @@ export function renderSidebar() {
   }
 }
 
+export function isBookmarked(path) {
+  return Boolean(path) && state.bookmarks.some((bookmark) => samePath(bookmark.path, path));
+}
+
 export function addBookmark(path, name) {
   if (!path) return;
-  if (state.bookmarks.some((bookmark) => samePath(bookmark.path, path))) {
+  if (isBookmarked(path)) {
     toast('That folder is already bookmarked', { type: 'info', icon: 'bookmark' });
     return;
   }
@@ -171,6 +199,11 @@ function onListClick(event) {
     removeBookmark(remove.dataset.bookmark);
     return;
   }
+  const playlist = event.target.closest('.nav-item[data-playlist-id]');
+  if (playlist) {
+    app.openPlaylist?.(playlist.dataset.playlistId);
+    return;
+  }
   const item = event.target.closest('.nav-item[data-path]');
   if (!item) return;
   app.navigate?.(item.dataset.path);
@@ -189,6 +222,7 @@ export function initSidebar() {
   const roots = [
     document.getElementById('quick-nav'),
     document.getElementById('bookmark-list'),
+    document.getElementById('playlist-list'),
     document.getElementById('drive-list'),
     document.getElementById('network-list'),
   ];

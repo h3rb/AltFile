@@ -37,6 +37,14 @@ let pathEditing = false;
 let fsTimer = 0;
 let searchTimer = null;
 let windowTitle = null;
+let pendingLaunchPath = '';
+
+function applyLaunchPath(path) {
+  const target = String(path || '').trim();
+  if (!target) return;
+  if (state.booted) navigate(target);
+  else pendingLaunchPath = target;
+}
 
 function normalizePath(path) {
   if (!path) return '';
@@ -1022,20 +1030,25 @@ function bindStaticEvents() {
   });
 
   document.querySelector('.tabstrip')?.addEventListener('contextmenu', (event) => {
-    const tab = activeTab();
+    const tabId = event.target.closest('[data-tab-id]')?.dataset.tabId;
+    const tab = state.tabs.find((item) => item.id === tabId) || activeTab();
     if (!tab) return;
     event.preventDefault();
-    showMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [
-        {
-          label: 'Copy to Clipboard',
-          icon: 'copy',
-          onClick: () => ops.copyEntryPaths([{ path: tab.path, name: tabLabel(tab.path) }]),
-        },
-      ],
-    });
+    const items = [
+      {
+        label: 'Copy path to clipboard',
+        icon: 'copy',
+        onClick: () => ops.copyEntryPaths([{ path: tab.path, name: tabLabel(tab.path) }]),
+      },
+    ];
+    if (!sidebar.isBookmarked(tab.path)) {
+      items.push({
+        label: 'Bookmark',
+        icon: 'bookmark',
+        onClick: () => sidebar.addBookmark(tab.path),
+      });
+    }
+    showMenu({ x: event.clientX, y: event.clientY, items });
   });
 
   document.getElementById('crumbs')?.addEventListener('click', (event) => {
@@ -1132,6 +1145,7 @@ function assignBridge() {
     reveal: ops.revealEntry,
     properties: ops.showProperties,
     bookmarkCurrent: sidebar.addBookmarkCurrent,
+    renderSidebar: sidebar.renderSidebar,
     rescanNetwork: loadNetwork,
     openSettings,
     openPalette,
@@ -1140,6 +1154,7 @@ function assignBridge() {
     closeTab,
     playMedia: player.playEntry,
     addToPlaylist: player.addToPlaylist,
+    openPlaylist: player.openPlaylistById,
     showPlaylist: player.showQueue,
     togglePlayback: player.togglePlay,
     entryMenu,
@@ -1167,6 +1182,7 @@ function listenFilesystem() {
       refreshPreservingSelection();
     }, 420);
   }).catch(() => {});
+  listen('open-path', (event) => applyLaunchPath(event.payload)).catch(() => {});
 }
 
 async function boot() {
@@ -1214,7 +1230,14 @@ async function boot() {
       await files.refreshFiles();
     }
   }
+  const launchPath = await api.takeLaunchPath().catch(() => null);
+  if (launchPath) pendingLaunchPath = launchPath;
   state.booted = true;
+  if (pendingLaunchPath) {
+    const target = pendingLaunchPath;
+    pendingLaunchPath = '';
+    await navigate(target);
+  }
   scheduleSave();
 }
 

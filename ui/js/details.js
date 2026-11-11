@@ -15,7 +15,7 @@ let mediaActive = 0;
 let observer = null;
 
 const MEDIA_MODES = new Set(['audio', 'video']);
-const ARCHIVE_EXTS = new Set(['zip', 'rar', 'tar', 'gz', 'tgz', 'bz2', 'tbz2', 'tbz']);
+const ARCHIVE_EXTS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'tbz2', 'tbz']);
 
 function detailMode(entry) {
   if (entry.isDir) return 'counts';

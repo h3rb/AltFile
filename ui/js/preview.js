@@ -2,7 +2,7 @@ import { api, mediaUrl, gifUrl } from './api.js';
 import { state, app } from './state.js';
 import { selectedEntries, focusedEntry, wantsThumb, isGifEntry, archiveSupported, archiveSummaryFor } from './files.js';
 import { icon, kindIcon } from './icons.js';
-import { playEntry, addToPlaylist, onPlayback, seekPlayback } from './player.js';
+import { playEntry, addToPlaylist, onPlayback, seekPlayback, isLooping, setLoop } from './player.js';
 import { fontTileHtml, observeFontTiles } from './fonts.js';
 import { wireModelPreview, stopModelPreview, isRotatableModel } from './model.js';
 import {
@@ -65,8 +65,10 @@ function actionsHtml(entry, info) {
   }
   if (MEDIA_KINDS.has(info.kind)) {
     const kind = esc(info.kind);
+    const looping = isLooping();
     return `
       <button class="mini-btn primary" type="button" data-action="play" data-path="${path}" data-kind="${kind}">${icon('play', 13)} Play</button>
+      <button class="mini-btn${looping ? ' active' : ''}" type="button" data-action="loop" aria-pressed="${looping}" title="Loop current file: ${looping ? 'on' : 'off'}">${icon('repeat', 13)} Loop</button>
       <button class="mini-btn" type="button" data-action="playlist-add" data-path="${path}" data-kind="${kind}">${icon('playlist', 13)} Add to playlist</button>
       <button class="mini-btn" type="button" data-action="reveal" data-path="${path}">${icon('external', 13)} Reveal</button>
       <button class="mini-btn" type="button" data-action="copy-path" data-path="${path}">${icon('copy', 13)} Copy path</button>`;
@@ -222,10 +224,21 @@ function subjectHtml(entry, info, thumb, text, archive) {
     }
   }
 
+  const titleBlock =
+    media && info.kind === 'audio'
+      ? `
+        <div class="preview-title-wrap">
+          <canvas class="preview-title-wave" aria-hidden="true"></canvas>
+          <div class="preview-title">${esc(info.name || entry.name)}</div>
+          <div class="preview-sub">${esc(dirname(info.path) || info.path)}</div>
+        </div>`
+      : `
+        <div class="preview-title">${esc(info.name || entry.name)}</div>
+        <div class="preview-sub">${esc(dirname(info.path) || info.path)}</div>`;
+
   return `
     ${showMedia ? mediaHtml(entry, thumb, info, archive) : ''}
-    <div class="preview-title">${esc(info.name || entry.name)}</div>
-    <div class="preview-sub">${esc(dirname(info.path) || info.path)}</div>
+    ${titleBlock}
     ${textBlock}
     <div class="meta-list">${meta}</div>
     <div class="preview-actions">${actionsHtml(entry, info)}</div>`;
@@ -330,7 +343,7 @@ function fallbackPeaks(seed) {
   return peaks;
 }
 
-function drawWaveform(canvas, peaks) {
+function drawWaveform(canvas, peaks, { subtle = false } = {}) {
   const rect = canvas.getBoundingClientRect();
   const width = Math.max(1, Math.round(rect.width || 276));
   const height = Math.max(1, Math.round(rect.height || 64));
@@ -344,19 +357,27 @@ function drawWaveform(canvas, peaks) {
 
   const mid = height / 2;
   const slot = width / peaks.length;
-  const bar = Math.max(1, slot * 0.62);
+  const bar = Math.max(1, slot * (subtle ? 0.9 : 0.62));
   const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, themeColor(0.92));
-  gradient.addColorStop(0.5, themeColor(0.72));
-  gradient.addColorStop(1, 'rgba(124, 156, 255, 0.8)');
+  if (subtle) {
+    gradient.addColorStop(0, themeColor(0.14));
+    gradient.addColorStop(0.5, themeColor(0.22));
+    gradient.addColorStop(1, themeColor(0.1));
+  } else {
+    gradient.addColorStop(0, themeColor(0.92));
+    gradient.addColorStop(0.5, themeColor(0.72));
+    gradient.addColorStop(1, 'rgba(124, 156, 255, 0.8)');
+  }
   ctx.fillStyle = gradient;
   for (let i = 0; i < peaks.length; i += 1) {
-    const amp = Math.max(1, peaks[i] * (mid - 3));
+    const amp = Math.max(1, peaks[i] * (mid - (subtle ? 1 : 3)));
     const x = i * slot + (slot - bar) / 2;
     ctx.fillRect(x, mid - amp, bar, amp * 2);
   }
-  ctx.fillStyle = 'rgba(148, 163, 184, 0.22)';
-  ctx.fillRect(0, mid, width, 1);
+  if (!subtle) {
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.22)';
+    ctx.fillRect(0, mid, width, 1);
+  }
 }
 
 function readWavFormat(bytes) {
@@ -402,6 +423,7 @@ function probeDuration(entry, onReady) {
 
 async function wireAudioPreview(entry, info, body, token) {
   const canvas = body.querySelector('.audio-wave');
+  const titleCanvas = body.querySelector('.preview-title-wave');
   const statusEl = body.querySelector('[data-audio-state]');
   const lengthEl = body.querySelector('[data-audio-length]');
   if (!canvas) return;
@@ -453,9 +475,14 @@ async function wireAudioPreview(entry, info, body, token) {
 
   seekDuration = data.duration || 0;
   drawWaveform(canvas, data.peaks);
+  if (titleCanvas) drawWaveform(titleCanvas, data.peaks, { subtle: true });
   if (typeof ResizeObserver === 'function') {
-    const observer = new ResizeObserver(() => drawWaveform(canvas, data.peaks));
+    const observer = new ResizeObserver(() => {
+      drawWaveform(canvas, data.peaks);
+      if (titleCanvas?.isConnected) drawWaveform(titleCanvas, data.peaks, { subtle: true });
+    });
     observer.observe(canvas);
+    if (titleCanvas) observer.observe(titleCanvas);
   }
 
   if (data.duration) {
@@ -730,6 +757,8 @@ function onPreviewClick(event) {
     app.openPath?.(path);
   } else if (action === 'play') {
     playEntry({ path, name: basename(path), kind: button.dataset.kind });
+  } else if (action === 'loop') {
+    setLoop();
   } else if (action === 'playlist-add') {
     addToPlaylist({ path, name: basename(path), kind: button.dataset.kind });
   } else if (action === 'visualize') {

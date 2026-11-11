@@ -18,7 +18,7 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub struct AppState {
     pub data_dir: PathBuf,
@@ -26,6 +26,7 @@ pub struct AppState {
     pub portable: bool,
     pub scan_gen: Arc<AtomicU64>,
     pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
+    pub pending_path: Mutex<Option<String>>,
 }
 
 #[derive(Serialize)]
@@ -71,6 +72,106 @@ fn portable_root() -> Option<PathBuf> {
     None
 }
 
+fn launch_path_from<I, S>(args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string())
+        .collect();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        let value = if let Some(rest) = arg.strip_prefix("--path=") {
+            Some(rest.to_string())
+        } else if arg == "--path" {
+            index += 1;
+            args.get(index).cloned()
+        } else {
+            None
+        };
+        if let Some(value) = value {
+            let path = value.trim().trim_matches('"').to_string();
+            if !path.is_empty() && std::path::Path::new(&path).is_dir() {
+                return Some(path);
+            }
+        }
+        index += 1;
+    }
+    None
+}
+
+fn focus_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn forward_launch_path(app: &tauri::AppHandle, path: String) {
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut pending) = state.pending_path.lock() {
+            *pending = Some(path.clone());
+        }
+    }
+    let _ = app.emit("open-path", path);
+    focus_main_window(app);
+}
+
+#[tauri::command]
+fn take_launch_path(state: tauri::State<'_, AppState>) -> Option<String> {
+    state
+        .pending_path
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.take())
+}
+
+#[tauri::command]
+fn install_explorer_menu() -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+
+        const LABEL: &str = "Explore in AltFile";
+        const VERB_KEY: &str = r"HKCU\Software\Classes\Directory\shell\AltFileExplore";
+
+        let exe = std::env::current_exe()
+            .map_err(|error| format!("Could not locate the app executable: {error}"))?;
+        let exe = exe.display().to_string();
+        let icon = format!("\"{exe}\"");
+        let command = format!("\"{exe}\" --path \"%1\"");
+        let command_key = format!("{VERB_KEY}\\command");
+
+        let add = |args: &[&str]| -> Result<(), String> {
+            let status = Command::new("reg")
+                .args(args)
+                .creation_flags(0x0800_0000)
+                .status()
+                .map_err(|error| format!("Could not run reg.exe: {error}"))?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("reg.exe failed with status {status}"))
+            }
+        };
+
+        add(&["add", VERB_KEY, "/ve", "/d", LABEL, "/f"])?;
+        add(&["add", VERB_KEY, "/v", "Icon", "/d", &icon, "/f"])?;
+        add(&["add", &command_key, "/ve", "/d", &command, "/f"])?;
+
+        Ok(LABEL.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("File Explorer integration is only available on Windows".to_string())
+    }
+}
+
 fn valid_cache_name(name: &str) -> bool {
     let Some((stem, ext)) = name.rsplit_once('.') else {
         return false;
@@ -111,6 +212,9 @@ fn serve_thumbnail<R: tauri::Runtime>(
 }
 
 pub fn run() {
+    let launch_path =
+        launch_path_from(std::env::args_os().map(|arg| arg.to_string_lossy().into_owned()));
+
     #[cfg(windows)]
     {
         if let Some(root) = portable_root() {
@@ -121,12 +225,19 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(path) = launch_path_from(argv) {
+                forward_launch_path(app, path);
+            } else {
+                focus_main_window(app);
+            }
+        }))
         .plugin(tauri_plugin_drag::init())
         .register_uri_scheme_protocol("thumb", serve_thumbnail)
         .register_uri_scheme_protocol("media", media::serve)
         .register_uri_scheme_protocol("font", fonts::serve)
         .register_uri_scheme_protocol("page", pages::serve)
-        .setup(|app| {
+        .setup(move |app| {
             let portable = portable_root();
             let data_dir = match &portable {
                 Some(root) => root.clone(),
@@ -153,6 +264,7 @@ pub fn run() {
                 portable: portable.is_some(),
                 scan_gen: Arc::new(AtomicU64::new(0)),
                 watcher: Mutex::new(None),
+                pending_path: Mutex::new(launch_path),
             });
 
             std::thread::spawn(move || {
@@ -191,7 +303,9 @@ pub fn run() {
             viz::cancel_scan,
             search::search_files,
             settings::load_settings,
-            settings::save_settings
+            settings::save_settings,
+            take_launch_path,
+            install_explorer_menu
         ])
         .run(tauri::generate_context!())
         .expect("error while running Alt File Explorer");

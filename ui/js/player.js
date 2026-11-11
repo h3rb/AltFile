@@ -1,8 +1,8 @@
 import { api, mediaUrl } from './api.js';
-import { state, scheduleSave, mediaKindOf } from './state.js';
+import { state, app, scheduleSave, mediaKindOf } from './state.js';
 import { icon } from './icons.js';
 import { esc, basename, dirname, clamp, fmtDuration, themeColor, uid } from './util.js';
-import { toast, showMenu, promptDialog, confirmDialog } from './dialogs.js';
+import { toast, showMenu, confirmDialog } from './dialogs.js';
 
 const AUDIO = 'audio';
 const VIDEO = 'video';
@@ -233,16 +233,49 @@ function findIndex(path) {
   return state.media.queue.findIndex((item) => samePath(item.path, path));
 }
 
+function selectedPlaylist() {
+  return state.playlists.find((playlist) => playlist.id === state.selectedPlaylistId) || null;
+}
+
 function renderBar() {
   if (!ui) return;
   const item = current();
+  const playlist = selectedPlaylist();
   ui.name.textContent = item ? item.name : 'Playlist';
   ui.sub.textContent = item ? dirname(item.path) : `${state.media.queue.length} item${state.media.queue.length === 1 ? '' : 's'}`;
   ui.count.textContent = String(state.media.queue.length);
+  ui.playlistName.textContent = playlist ? playlist.name : 'No playlist';
+  ui.playlistPick.title = playlist ? `Playlist: ${playlist.name}` : 'Choose a playlist';
   renderArt(item);
   updatePlayButton();
   updateMuteButton();
+  syncLoopButtons();
   updateQueue();
+}
+
+function syncLoopButtons() {
+  const on = state.media.loop;
+  if (ui?.loop) {
+    ui.loop.classList.toggle('active', on);
+    ui.loop.setAttribute('aria-pressed', String(on));
+    ui.loop.title = on ? 'Loop current file: on' : 'Loop current file: off';
+  }
+  for (const button of document.querySelectorAll('.preview-actions [data-action="loop"]')) {
+    button.classList.toggle('active', on);
+    button.setAttribute('aria-pressed', String(on));
+    button.title = on ? 'Loop current file: on' : 'Loop current file: off';
+  }
+}
+
+export function isLooping() {
+  return state.media.loop;
+}
+
+export function setLoop(enabled) {
+  state.media.loop = typeof enabled === 'boolean' ? enabled : !state.media.loop;
+  scheduleSave();
+  syncLoopButtons();
+  return state.media.loop;
 }
 
 function renderArt(item) {
@@ -311,10 +344,8 @@ function renderQueue() {
   ui.queueMeta.textContent = `${items.length} item${items.length === 1 ? '' : 's'}`;
   if (!items.length) {
     ui.queueList.innerHTML = '<div class="pq-empty">The playlist is empty. Add audio or video from the preview pane or the file menu.</div>';
-    ui.clear.disabled = true;
     return;
   }
-  ui.clear.disabled = false;
   ui.queueList.innerHTML = items
     .map((item, index) => {
       const active = index === state.media.index;
@@ -382,6 +413,7 @@ export function playEntry(entry, { autoplay = true, startAt = null } = {}) {
 
 export function addToPlaylist(entries) {
   const list = (Array.isArray(entries) ? entries : [entries]).filter(Boolean);
+  const addedItems = [];
   let added = 0;
   let skipped = 0;
   for (const entry of list) {
@@ -395,16 +427,40 @@ export function addToPlaylist(entries) {
       continue;
     }
     state.media.queue.push(item);
+    addedItems.push(item);
     added += 1;
   }
-  renderBar();
-  scheduleSave();
+
+  let playlist = selectedPlaylist();
+  let created = false;
   if (added) {
-    toast(`Added ${added} item${added === 1 ? '' : 's'} to the playlist`, {
-      type: 'success',
-      icon: 'playlist',
-      action: { label: 'Show', onClick: () => showQueue() },
-    });
+    if (!playlist) {
+      playlist = { id: uid(), name: nextPlaylistName(), items: copyQueue(), updatedAt: Date.now() };
+      state.playlists.push(playlist);
+      state.selectedPlaylistId = playlist.id;
+      created = true;
+    } else {
+      const seen = new Set(playlist.items.map((item) => item.path.toLowerCase()));
+      for (const item of addedItems) {
+        const key = item.path.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        playlist.items.push({ path: item.path, name: item.name, kind: item.kind });
+      }
+      playlist.updatedAt = Date.now();
+    }
+    scheduleSave();
+    app.renderSidebar?.();
+  }
+
+  renderBar();
+  if (added) {
+    toast(
+      created
+        ? `Created “${playlist.name}” with ${added} item${added === 1 ? '' : 's'}`
+        : `Added ${added} item${added === 1 ? '' : 's'} to “${playlist.name}”`,
+      { type: 'success', icon: 'playlist', action: { label: 'Show', onClick: () => showQueue() } }
+    );
   } else if (skipped) {
     toast('Already in the playlist', { type: 'info', icon: 'playlist' });
   }
@@ -426,93 +482,64 @@ function nextPlaylistName() {
   return `Playlist ${index}`;
 }
 
-function mergeIntoPlaylist(playlist) {
-  const seen = new Set(playlist.items.map((item) => item.path.toLowerCase()));
-  let added = 0;
-  for (const item of state.media.queue) {
-    if (seen.has(item.path.toLowerCase())) continue;
-    seen.add(item.path.toLowerCase());
-    playlist.items.push({ path: item.path, name: item.name, kind: item.kind });
-    added += 1;
+function selectPlaylist(playlist) {
+  if (!playlist) return;
+  state.selectedPlaylistId = playlist.id;
+  state.media.queue = playlist.items.map((item) => ({ ...item }));
+  if (state.media.queue.length) {
+    state.media.index = 0;
+    playIndex(0, { autoplay: false, user: false });
+  } else {
+    state.media.index = -1;
+    clearEngine();
+    renderBar();
   }
-  if (!added) {
-    toast(`Everything is already in “${playlist.name}”`, { type: 'info', icon: 'playlist' });
-    return;
-  }
-  playlist.updatedAt = Date.now();
+  bar.hidden = false;
+  queueOpen = true;
+  renderBar();
+  updateQueue();
   scheduleSave();
-  toast(`Saved ${added} item${added === 1 ? '' : 's'} to “${playlist.name}”`, { type: 'success', icon: 'playlist' });
+  app.renderSidebar?.();
 }
 
-async function savePlaylistAs() {
-  if (!state.media.queue.length) {
-    toast('The playlist is empty — add some audio or video first', { type: 'info', icon: 'playlist' });
-    return;
-  }
-  const name = await promptDialog({
-    title: 'Save playlist',
-    label: 'Playlist name',
-    value: nextPlaylistName(),
-    confirmLabel: 'Save',
-    hint: 'Saved playlists persist with your settings and can be reopened from the player.',
-  });
-  if (!name) return;
-  const trimmed = name.slice(0, 80);
-  const existing = playlistNamed(trimmed);
-  if (existing) {
-    const replace = await confirmDialog({
-      title: 'Replace playlist',
-      message: `A playlist named “${existing.name}” already exists. Replace its contents with the current playlist?`,
-      confirmLabel: 'Replace',
+export function openPlaylistById(id) {
+  selectPlaylist(state.playlists.find((playlist) => playlist.id === id));
+}
+
+function startNewPlaylist() {
+  state.selectedPlaylistId = null;
+  state.media.queue = [];
+  state.media.index = -1;
+  clearEngine();
+  bar.hidden = false;
+  queueOpen = true;
+  renderBar();
+  updateQueue();
+  scheduleSave();
+  app.renderSidebar?.();
+}
+
+function showPlaylistPicker(anchor) {
+  const playlist = selectedPlaylist();
+  const items = state.playlists.map((entry) => ({
+    label: entry.name,
+    icon: entry.id === state.selectedPlaylistId ? 'check' : 'playlist',
+    shortcut: String(entry.items.length),
+    onClick: () => selectPlaylist(entry),
+  }));
+  if (items.length) items.push({ separator: true });
+  items.push({ label: 'New playlist', icon: 'plus', onClick: () => startNewPlaylist() });
+  if (playlist) {
+    items.push({ separator: true });
+    items.push({
+      label: `Delete “${playlist.name}”`,
+      icon: 'trash',
+      danger: true,
+      onClick: () => deletePlaylist(playlist),
     });
-    if (!replace) return;
-    existing.items = copyQueue();
-    existing.updatedAt = Date.now();
-    scheduleSave();
-    toast(`Replaced “${existing.name}”`, { type: 'success', icon: 'playlist' });
-    return;
-  }
-  state.playlists.push({ id: uid(), name: trimmed, items: copyQueue(), updatedAt: Date.now() });
-  scheduleSave();
-  toast(`Saved “${trimmed}”`, { type: 'success', icon: 'playlist' });
-}
-
-export function showSavePlaylistMenu(anchor) {
-  if (!state.media.queue.length) {
-    toast('The playlist is empty — add some audio or video first', { type: 'info', icon: 'playlist' });
-    return;
-  }
-  if (!state.playlists.length) {
-    savePlaylistAs();
-    return;
   }
   const rect = anchor.getBoundingClientRect();
-  showMenu({
-    x: rect.left,
-    y: rect.top,
-    items: [
-      ...state.playlists.map((playlist) => ({
-        label: playlist.name,
-        icon: 'playlist',
-        shortcut: String(playlist.items.length),
-        onClick: () => mergeIntoPlaylist(playlist),
-      })),
-      { separator: true },
-      { label: 'Save as new playlist…', icon: 'plus', onClick: () => savePlaylistAs() },
-    ],
-  });
-}
-
-function openPlaylist(playlist) {
-  if (!playlist.items.length) {
-    toast(`“${playlist.name}” is empty`, { type: 'info', icon: 'playlist' });
-    return;
-  }
-  state.media.queue = playlist.items.map((item) => ({ ...item }));
-  state.media.index = 0;
-  playIndex(0, { autoplay: false, user: false });
-  queueOpen = true;
-  updateQueue();
+  showMenu({ x: rect.left, y: rect.top, items });
 }
 
 async function deletePlaylist(playlist) {
@@ -524,31 +551,11 @@ async function deletePlaylist(playlist) {
   });
   if (!ok) return;
   state.playlists = state.playlists.filter((item) => item.id !== playlist.id);
+  if (state.selectedPlaylistId === playlist.id) state.selectedPlaylistId = null;
   scheduleSave();
+  app.renderSidebar?.();
+  renderBar();
   toast(`Deleted “${playlist.name}”`, { type: 'info', icon: 'playlist' });
-}
-
-export function showOpenPlaylistsMenu(anchor) {
-  if (!state.playlists.length) {
-    toast('No saved playlists yet — save the current playlist first', { type: 'info', icon: 'playlist' });
-    return;
-  }
-  const rect = anchor.getBoundingClientRect();
-  showMenu({
-    x: rect.left,
-    y: rect.top,
-    items: state.playlists.map((playlist) => ({
-      label: playlist.name,
-      icon: 'playlist',
-      shortcut: String(playlist.items.length),
-      submenu: [
-        { label: 'Open playlist', icon: 'play', onClick: () => openPlaylist(playlist) },
-        { label: 'Add to current playlist', icon: 'plus', onClick: () => addToPlaylist(playlist.items) },
-        { separator: true },
-        { label: 'Delete playlist', icon: 'trash', danger: true, onClick: () => deletePlaylist(playlist) },
-      ],
-    })),
-  });
 }
 
 export function togglePlay() {
@@ -582,7 +589,7 @@ function step(delta, wrap) {
   playIndex(next, { autoplay: true });
 }
 
-function stopPlayback() {
+function clearEngine() {
   if (!engine) return;
   suppressError = true;
   pendingSeek = null;
@@ -593,6 +600,11 @@ function stopPlayback() {
   duration = 0;
   state.media.index = -1;
   state.media.playing = false;
+}
+
+function stopPlayback() {
+  if (!engine) return;
+  clearEngine();
   queueOpen = false;
   bar.hidden = true;
   renderBar();
@@ -603,9 +615,16 @@ function stopPlayback() {
 function removeAt(index) {
   const list = state.media.queue;
   if (index < 0 || index >= list.length) return;
+  const removed = list[index];
   const wasCurrent = index === state.media.index;
   const wasPlaying = wasCurrent && !engine.paused;
   list.splice(index, 1);
+  const playlist = selectedPlaylist();
+  if (playlist) {
+    playlist.items = playlist.items.filter((item) => !samePath(item.path, removed.path));
+    playlist.updatedAt = Date.now();
+    app.renderSidebar?.();
+  }
   if (!list.length) {
     stopPlayback();
     return;
@@ -657,6 +676,7 @@ export function initPlayer() {
         <button class="player-btn" type="button" data-player="prev" title="Previous">${icon('skipBack', 15)}</button>
         <button class="player-btn player-play" type="button" data-player="toggle" title="Play (Space)">${icon('play', 16)}</button>
         <button class="player-btn" type="button" data-player="next" title="Next">${icon('skipForward', 15)}</button>
+        <button class="player-btn player-loop-btn" type="button" data-player="loop" aria-pressed="${state.media.loop}" title="Loop current file: ${state.media.loop ? 'on' : 'off'}">${icon('repeat', 15)}</button>
       </div>
       <div class="player-timeline">
         <span class="player-time" data-player-current>0:00</span>
@@ -678,10 +698,11 @@ export function initPlayer() {
     <div class="player-queue" data-player-queue hidden>
       <div class="player-queue-head">
         <span>Playlist</span>
+        <button class="player-playlist-pick" type="button" data-player="pick" title="Choose a playlist">
+          <span data-player-playlist>No playlist</span>
+          ${icon('chevronDown', 12)}
+        </button>
         <span class="player-queue-meta" data-player-queue-meta></span>
-        <button class="mini-btn" type="button" data-player="open" title="Open a saved playlist">Open</button>
-        <button class="mini-btn" type="button" data-player="save" title="Save the current playlist">Save</button>
-        <button class="mini-btn" type="button" data-player="clear">Clear</button>
       </div>
       <div class="player-queue-list" data-player-queue-list></div>
     </div>`;
@@ -691,6 +712,7 @@ export function initPlayer() {
     name: bar.querySelector('[data-player-name]'),
     sub: bar.querySelector('[data-player-sub]'),
     toggle: bar.querySelector('[data-player="toggle"]'),
+    loop: bar.querySelector('[data-player="loop"]'),
     mute: bar.querySelector('[data-player="mute"]'),
     volume: bar.querySelector('[data-player-volume]'),
     range: bar.querySelector('[data-player-range]'),
@@ -702,7 +724,8 @@ export function initPlayer() {
     queue: bar.querySelector('[data-player-queue]'),
     queueList: bar.querySelector('[data-player-queue-list]'),
     queueMeta: bar.querySelector('[data-player-queue-meta]'),
-    clear: bar.querySelector('[data-player="clear"]'),
+    playlistPick: bar.querySelector('[data-player="pick"]'),
+    playlistName: bar.querySelector('[data-player-playlist]'),
   };
 
   engine = document.createElement('video');
@@ -751,6 +774,11 @@ export function initPlayer() {
     updatePlayButton();
     notifyPlayback();
     stopPulse();
+    if (state.media.loop) {
+      engine.currentTime = 0;
+      engine.play().catch(() => {});
+      return;
+    }
     if (state.media.index < state.media.queue.length - 1) {
       playIndex(state.media.index + 1, { autoplay: true });
     }
@@ -797,6 +825,7 @@ export function initPlayer() {
     if (action === 'toggle') togglePlay();
     else if (action === 'prev') step(-1, true);
     else if (action === 'next') step(1, true);
+    else if (action === 'loop') setLoop();
     else if (action === 'mute') {
       engine.muted = !engine.muted;
       updateMuteButton();
@@ -807,14 +836,8 @@ export function initPlayer() {
       } else {
         showQueue();
       }
-    } else if (action === 'open') {
-      showOpenPlaylistsMenu(button);
-    } else if (action === 'save') {
-      showSavePlaylistMenu(button);
-    } else if (action === 'clear') {
-      state.media.queue = [];
-      stopPlayback();
-      toast('Playlist cleared', { type: 'info', icon: 'playlist' });
+    } else if (action === 'pick') {
+      showPlaylistPicker(button);
     } else if (action === 'close') {
       stopPlayback();
     }

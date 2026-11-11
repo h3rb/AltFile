@@ -25,6 +25,8 @@ export const state = {
   searchRecursive: false,
   modelSpin: true,
   themeHue: DEFAULT_HUE,
+  showPlaylists: false,
+  selectedPlaylistId: null,
   clipboard: { paths: [], cut: false },
   preview: { open: true, token: 0 },
   media: {
@@ -33,6 +35,7 @@ export const state = {
     volume: 0.9,
     muted: false,
     playing: false,
+    loop: true,
   },
   playlists: [],
   viz: {
@@ -112,6 +115,7 @@ function restoreMedia(saved) {
     state.media.volume = clamp(saved.mediaVolume, 0, 1);
   }
   state.media.muted = saved.mediaMuted === true;
+  state.media.loop = saved.mediaLoop !== false;
 }
 
 function normalizeSort(sort) {
@@ -148,6 +152,7 @@ export async function loadSession() {
     state.preview.open = saved.previewOpen !== false;
     state.searchRecursive = saved.searchRecursive === true;
     state.modelSpin = saved.modelSpin !== false;
+    state.showPlaylists = saved.showPlaylists === true;
     if (Number.isFinite(saved.themeHue)) {
       state.themeHue = ((saved.themeHue % 360) + 360) % 360;
     }
@@ -169,6 +174,9 @@ export async function loadSession() {
           updatedAt: Number.isFinite(savedPlaylist.updatedAt) ? savedPlaylist.updatedAt : 0,
         });
       }
+    }
+    if (state.playlists.some((playlist) => playlist.id === saved.selectedPlaylistId)) {
+      state.selectedPlaylistId = saved.selectedPlaylistId;
     }
 
     if (Array.isArray(saved.tabs)) {
@@ -215,6 +223,8 @@ export function captureSession() {
     searchRecursive: state.searchRecursive,
     modelSpin: state.modelSpin,
     themeHue: state.themeHue,
+    showPlaylists: state.showPlaylists,
+    selectedPlaylistId: state.selectedPlaylistId,
     previewOpen: state.preview.open,
     mediaQueue: state.media.queue
       .slice(0, 200)
@@ -222,6 +232,7 @@ export function captureSession() {
     mediaIndex: state.media.index,
     mediaVolume: state.media.volume,
     mediaMuted: state.media.muted,
+    mediaLoop: state.media.loop,
     playlists: state.playlists.map((playlist) => ({
       id: playlist.id,
       name: playlist.name,

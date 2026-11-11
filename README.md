@@ -30,18 +30,22 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **Hover video previews**: video cards start a muted, looping inline playback of the file while the pointer is
   over the card, and return to the poster frame on mouse-out.
 - **Grid folder cards** fill the preview box with an oversized folder and show live subfolder/file counts, each
-  marked with a folder or document icon; counts load lazily and honor the hidden-file toggle.
+  marked with a folder or document icon; counts load lazily and honor the hidden-file toggle. A row of small
+  icons under the counts hints at the kinds of files inside — audio, video and 3D models — with one icon per
+  kind present.
 - **Folder content size**: the same tile shows the recursive size of the folder, and list view replaces the `—`
   in the size column with it. Sizes walk the tree lazily for visible rows with a time/entry budget, so a partial
   total is suffixed with `+` instead of blocking the view.
 - **Font specimens**: `.ttf`, `.otf`, `.woff` and `.woff2` cards and the preview pane render the full ASCII
   sweep — `A–Z`, `a–z`, `0–9` and punctuation — in the actual typeface, loaded lazily for visible tiles through
   the `font://` protocol.
-- **Archive contents**: ZIP, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, GZ, BZ2 and RAR (4 and 5) cards list the first
+- **Archive contents**: ZIP, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, GZ, BZ2, RAR (4 and 5) and 7Z cards list the first
   entries, the archive format, file/folder counts, and a best-guess content type (Application, Source Code,
   Media Files, Documents, Fonts, 3D Models, Archives, or Mixed Files). ZIP indexes are read from the central
   directory without decompressing entry data; compressed tar streams are scanned with a 256 MB budget, and a
-  partial result is marked with `+`. The preview pane shows the same contents list with total uncompressed size.
+  partial result is marked with `+`. 7Z headers are decoded through their compressed (encoded) form without
+  extracting file data, and password-protected headers simply report that contents are unavailable. The preview
+  pane shows the same contents list with total uncompressed size.
 - **HTML thumbnails**: `.html` and `.htm` cards render the page itself in a live, sandboxed frame (scripts,
   forms and navigation disabled) served through the `page://` protocol, so relative stylesheets, images and
   fonts load from the file's own folder. Only visible cards mount a frame, and a bounded pool is recycled as
@@ -54,15 +58,22 @@ treemap visualization of any folder — and it builds as a portable executable f
   WebGL view instead of a static poster, so the shape can be inspected without leaving the app. Rotation can
   be turned off in **Settings → Appearance → Rotate 3D models**, which freezes the current three-quarter view.
 - **Media previews and playlist**: audio waveforms with duration, bitrate, sample rate, and channels
-  (click the waveform to start playback at that point); video frame previews with hover scrubbing over
+  (click the waveform to start playback at that point), plus a faint waveform drawn behind the file name
+  in the preview details; video frame previews with hover scrubbing over
   the timeline; and a persistent player with a queue you can fill from the preview pane, context menu,
   or command palette (`Space` toggles playback). When the file open in the preview is playing, the
   preview's own video follows the player — starting, pausing, and staying in sync — and scrubbing the
   preview timeline seeks the player. While audio plays, the shading on grid thumbnails pulses subtly to
   the beat (Web Audio analyser; disabled when the system asks for reduced motion), and the playing file's
-  card shows a live spectrum/oscilloscope overlay fed by the same analyser. The ad hoc queue can be
-  saved as a named playlist (`Save` in the playlist panel) into a new name or an existing saved playlist;
-  `Open` reopens saved playlists, adds them to the current queue, or deletes them.
+  card shows a live spectrum/oscilloscope overlay fed by the same analyser. Loop playback is on by default:
+  when a file ends it repeats, and turning Loop off lets playback advance to the next item as before. Toggle
+  it from the repeat button in the player bar, the **Loop** button next to **Play** in audio and video
+  previews, or **Settings → Playback → Loop playback**. The playlist panel header
+  shows the selected saved playlist: **Add to playlist** sends new files there, and when no playlist is
+  selected the next add creates and selects a new one. Picking an existing playlist loads it into the
+  player, removing a track from the queue updates the selected playlist, and the picker can start a new
+  playlist or delete the current one. Turn on **Settings → Appearance → Playlists in sidebar** to list
+  saved playlists under Bookmarks in the left panel; clicking one opens it in the player.
 - **Search** the current folder instantly, or recurse into subfolders with gitignore-aware walking. Which of
   the two the search box does is a setting (**Settings → Browsing → Search subfolders**); the scope button next
   to the box flips the same switch, and the choice is remembered across sessions.
@@ -74,6 +85,11 @@ treemap visualization of any folder — and it builds as a portable executable f
   and delete to the system Trash.
 - **System Menu** (Windows): right-click any drive, file or folder — including treemap tiles — and open
   the real shell context menu, with shell extensions and submenus, as a submenu of the app menu.
+- **File Explorer integration** (Windows): **Settings → Windows integration → Add AltFile Context Menu Items**
+  adds **Explore in AltFile** to the right-click menu for folders. It is a per-user registration and needs no
+  administrator rights. Choosing it launches the app at that folder; if AltFile is already running, the window
+  comes to the front and its active tab navigates there, while the second launch hands its request to the first
+  instance and exits.
 - **Keyboard-first**: command palette, quick paths, vim-free arrow navigation, and standard shortcuts.
 - **Portable mode**: place `portable.txt` next to the executable and settings, session, and thumbnails are kept
   in a `data` folder beside it. On Windows the WebView2 profile moves there too.
@@ -185,6 +201,9 @@ the executable at compile time.
 - `src-tauri/src/pages.rs` — serves an HTML file and its sibling assets (CSS, images, fonts, media) over the
   `page://` / `http://page.localhost` protocol so grid cards can render the page in a sandboxed frame.
 - `src-tauri/src/settings.rs` — atomic JSON settings/session storage.
+- `src-tauri/src/lib.rs` — app bootstrap, including the per-user Explorer registration under
+  `Directory\shell\AltFileExplore`, and single-instance forwarding: a second launch with `--path` focuses the
+  running window, navigates it, and exits.
 - `src-tauri/src/mesh.rs` — mesh parsing for OBJ, STL (ASCII and binary), PLY (ASCII and binary), 3MF
   (its own ZIP + XML reader) and glTF/GLB/OFF: flat triangle lists for the renderer, bounding-box extents
   for the Details column, and sampled triangle corners streamed to the preview viewer as a binary payload.
@@ -192,7 +211,8 @@ the executable at compile time.
   supersampled z-buffer, two-sided Lambert shading and depth fade, so a thumbnail needs no shell handler or GPU.
 - `src-tauri/src/archive.rs` — header-only archive summaries for the cards, preview pane and Details column:
   ZIP central directory (including Zip64), TAR block headers, gzip/bzip2-decompressed tar streams, plain
-  gzip/bzip2, and RAR 4/5 block walks. It also votes on a content type from entry extensions.
+  gzip/bzip2, RAR 4/5 block walks, and 7Z headers (decoded through `sevenz-rust2` when the header is encoded).
+  It also votes on a content type from entry extensions.
 - `ui/js/` — the application: `files.js` (rendering, selection, lazy thumbnails), `fonts.js` (font specimens),
   `pages.js` (live sandboxed HTML card thumbnails), `details.js` (the smart Details column), `model.js`
   (rotating WebGL model preview), `viz.js` (treemap), `preview.js`, `ops.js`, `palette.js`, `settings.js`,
