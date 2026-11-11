@@ -180,9 +180,9 @@ export function drawWaveform(canvas, peaks, { subtle = false } = {}) {
   const bar = Math.max(1, slot * (subtle ? 0.9 : 0.62));
   const gradient = ctx.createLinearGradient(0, 0, 0, height);
   if (subtle) {
-    gradient.addColorStop(0, themeColor(0.14));
-    gradient.addColorStop(0.5, themeColor(0.24));
-    gradient.addColorStop(1, themeColor(0.1));
+    gradient.addColorStop(0, themeColor(0.22));
+    gradient.addColorStop(0.5, themeColor(0.34));
+    gradient.addColorStop(1, themeColor(0.18));
   } else {
     gradient.addColorStop(0, themeColor(0.92));
     gradient.addColorStop(0.5, themeColor(0.72));
