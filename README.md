@@ -91,6 +91,9 @@ treemap visualization of any folder — and it builds as a portable executable f
   comes to the front and its active tab navigates there, while the second launch hands its request to the first
   instance and exits.
 - **Keyboard-first**: command palette, quick paths, vim-free arrow navigation, and standard shortcuts.
+- **Update check**: on launch (at most once every six hours) the app asks the GitHub releases API for the
+  latest release. When a newer version exists, a version pill appears on the Settings button in the sidebar,
+  and **Settings → About** offers to open the release page. Failed checks stay quiet and can be retried there.
 - **Portable mode**: place `portable.txt` next to the executable and settings, session, and thumbnails are kept
   in a `data` folder beside it. On Windows the WebView2 profile moves there too.
 - **Session restore**: tabs, bookmarks, recent folders, thumbnail size, panel state, the playlist, and saved playlists persist across runs.

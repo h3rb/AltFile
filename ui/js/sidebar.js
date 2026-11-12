@@ -2,6 +2,7 @@ import { state, activeTab, app, scheduleSave } from './state.js';
 import { esc, basename, humanSize, uid } from './util.js';
 import { icon } from './icons.js';
 import { toast } from './dialogs.js';
+import { updatePillHtml } from './updates.js';
 
 const QUICK_ICONS = {
   home: 'home',
@@ -73,7 +74,7 @@ export function renderSidebar() {
   const quickPlaces = places.filter((place) => place.kind === 'quick');
   const drives = places.filter((place) => place.kind === 'drive');
 
-  if (settingsBtn) settingsBtn.innerHTML = `${icon('settings', 15)}<span>Settings</span>`;
+  if (settingsBtn) settingsBtn.innerHTML = `${icon('settings', 15)}<span>Settings</span>${updatePillHtml()}`;
   if (addBtn) addBtn.innerHTML = icon('plus', 13);
 
   quick.innerHTML = `

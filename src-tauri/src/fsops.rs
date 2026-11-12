@@ -479,6 +479,15 @@ pub fn open_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    let link = url.trim();
+    if !(link.starts_with("https://") || link.starts_with("http://")) {
+        return Err("Only web links can be opened".into());
+    }
+    opener::open(link).map_err(|e| format!("Could not open {link}: {e}"))
+}
+
+#[tauri::command]
 pub fn reveal_path(path: String) -> Result<(), String> {
     let p = paths::expand(&path);
     opener::reveal(&p).map_err(|e| format!("Could not reveal {}: {e}", p.display()))

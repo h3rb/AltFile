@@ -283,6 +283,7 @@ pub fn run() {
             network::network_places,
             network::network_computers,
             fsops::open_path,
+            fsops::open_url,
             fsops::reveal_path,
             fsops::copy_text,
             fsops::file_info,

@@ -42,6 +42,7 @@ export const api = {
   folderCounts: (path, showHidden) => invoke('folder_counts', { path, showHidden }),
   folderSize: (path, showHidden) => invoke('folder_size', { path, showHidden }),
   openPath: (path) => invoke('open_path', { path }),
+  openUrl: (url) => invoke('open_url', { url }),
   revealPath: (path) => invoke('reveal_path', { path }),
   shellMenuItems: (path) => invoke('shell_menu_items', { path }),
   shellMenuInvoke: (path, id) => invoke('shell_menu_invoke', { path, id }),

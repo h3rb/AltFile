@@ -28,6 +28,7 @@ import * as viz from './viz.js';
 import * as ops from './ops.js';
 import * as palette from './palette.js';
 import { openSettings } from './settings.js';
+import { initUpdates } from './updates.js';
 import { systemMenuItem } from './systemmenu.js';
 
 const VIEW_BUTTONS = { grid: 'view-grid', list: 'view-list', viz: 'view-viz' };
@@ -1211,6 +1212,7 @@ async function boot() {
   renderChrome();
   preview.renderPreview();
   loadNetwork().catch(() => {});
+  initUpdates(() => sidebar.renderSidebar());
 
   const ok = await files.refreshFiles();
   const tab = activeTab();

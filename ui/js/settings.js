@@ -7,6 +7,7 @@ import { renderFiles } from './files.js';
 import { setModelSpin } from './model.js';
 import { setLoop } from './player.js';
 import { renderViz } from './viz.js';
+import { checkForUpdates, onUpdate, updateInfo } from './updates.js';
 
 const SHORTCUTS = [
   ['Ctrl', 'K', 'Command palette'],
@@ -33,6 +34,23 @@ const rerender = debounce(() => renderFiles(), 220);
 const rerenderViz = debounce(() => {
   if (activeTab()?.view === 'viz') renderViz();
 }, 220);
+
+function updateRowHtml() {
+  const update = updateInfo();
+  if (update.checking) {
+    return `<span id="settings-update-status">Checking for updates…</span><span class="nav-meta">Please wait</span>`;
+  }
+  if (update.available) {
+    return `<span id="settings-update-status">Version ${esc(update.latest)} is available</span>
+      <button class="mini-btn" id="settings-update-action" data-action="open" type="button">${icon('download', 12)} Get update</button>`;
+  }
+  if (update.error) {
+    return `<span id="settings-update-status">Could not check for updates</span>
+      <button class="mini-btn" id="settings-update-action" data-action="check" type="button">Retry</button>`;
+  }
+  return `<span id="settings-update-status">${update.checkedAt ? 'Up to date' : 'Not checked yet'}</span>
+    <button class="mini-btn" id="settings-update-action" data-action="check" type="button">Check now</button>`;
+}
 
 function settingsHtml() {
   const tab = activeTab();
@@ -189,6 +207,7 @@ function settingsHtml() {
       <div class="about-line"><span>Platform</span><strong>${esc(appInfo.platform || 'unknown')}</strong></div>
       <div class="about-line"><span>Build</span><strong>Tauri 2 · Rust · system WebView</strong></div>
       <div class="about-line"><span>Mode</span><strong>${appInfo.portable ? 'Portable' : 'Installed'}</strong></div>
+      <div class="cache-line" id="settings-update-row">${updateRowHtml()}</div>
     </div>`;
 }
 
@@ -207,6 +226,11 @@ export function openSettings() {
   const body = document.createElement('div');
   body.innerHTML = settingsHtml();
   const appInfo = state.app || {};
+  const updateRow = body.querySelector('#settings-update-row');
+  const repaintUpdateRow = () => {
+    if (updateRow) updateRow.innerHTML = updateRowHtml();
+  };
+  const stopUpdates = onUpdate(repaintUpdateRow);
   const modal = openModal({
     headerClass: 'settings-head',
     headerHtml: `
@@ -220,6 +244,21 @@ export function openSettings() {
     body,
     width: 660,
     actions: [{ label: 'Done', kind: 'primary' }],
+    onClose: stopUpdates,
+  });
+
+  body.querySelector('#settings-update-row')?.addEventListener('click', async (event) => {
+    const action = event.target.closest('#settings-update-action');
+    if (!action || action.disabled) return;
+    if (action.dataset.action === 'open') {
+      api.openUrl(updateInfo().url).catch((error) => toast(String(error), { type: 'error' }));
+      return;
+    }
+    action.disabled = true;
+    const result = await checkForUpdates({ force: true });
+    if (result.error) toast('Could not check for updates', { type: 'error' });
+    else if (result.available) toast(`Alt File Explorer ${result.latest} is available`, { type: 'success', icon: 'download' });
+    else toast('You are on the latest version', { type: 'success', icon: 'check' });
   });
 
   const hueRange = body.querySelector('#settings-hue');
