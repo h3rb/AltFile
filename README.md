@@ -14,11 +14,19 @@ treemap visualization of any folder — and it builds as a portable executable f
   shares the browse list shows but the shell hides). Entries open the UNC path like any other folder, and
   the refresh icon rescans. The group is hidden on Linux, where there is nothing to enumerate.
 - **Smart thumbnails** generated on demand and cached by content hash (512 MB LRU-style cache):
-  - Windows: images (with EXIF orientation), video/audio posters, PDF and Office documents, and executable icons via the shell.
+  - Windows: images (with EXIF orientation), video/audio posters, PDF first pages through the Windows PDF
+    renderer, and Office documents and executable icons via the shell.
   - Linux: images, video posters through `ffmpeg`, and PDF first pages through `pdftoppm` when available.
+  - Password-protected PDFs show a lock instead of a preview, since they cannot be rendered without the password.
   - Both: **3D model renders** for `.stl`, `.obj`, `.ply` and `.3mf` — the mesh is parsed and shaded by a small
     built-in software renderer (no shell handler, no GPU), so a model card shows the object itself from a
     three-quarter view instead of a generic icon.
+  - **3MF projects** render in color: core-spec base materials, color groups, composite and multi-property
+    materials, Bambu Studio / Orca Slicer part filaments, PrusaSlicer volume extruders, and painted
+    multi-material regions (`paint_color` / `mmu_segmentation`) all tint the shaded model. Build items,
+    nested components, sub-model files and transforms are honored, modifier volumes are skipped, and
+    multi-plate projects show the first plate. Very large scenes are simplified by vertex clustering to a
+    facet budget, which keeps surfaces closed instead of thinning them into speckles.
 - **Drag files out**: drag any card or list row into another application. Selection is honored (drag a
   selected item to move the whole selection) and the drop carries real files through the native OS drag, so
   apps and file managers receive the files themselves.
@@ -44,12 +52,17 @@ treemap visualization of any folder — and it builds as a portable executable f
   Media Files, Documents, Fonts, 3D Models, Archives, or Mixed Files). ZIP indexes are read from the central
   directory without decompressing entry data; compressed tar streams are scanned with a 256 MB budget, and a
   partial result is marked with `+`. 7Z headers are decoded through their compressed (encoded) form without
-  extracting file data, and password-protected headers simply report that contents are unavailable. The preview
-  pane shows the same contents list with total uncompressed size.
+  extracting file data. Password-protected ZIP, RAR and 7Z archives (including archives with encrypted headers)
+  show a padlock over the card, an "Encrypted" content type, and a password-required message in the preview
+  pane instead of a contents list. The preview pane shows the same contents list with total uncompressed size.
 - **HTML thumbnails**: `.html` and `.htm` cards render the page itself in a live, sandboxed frame (scripts,
   forms and navigation disabled) served through the `page://` protocol, so relative stylesheets, images and
   fonts load from the file's own folder. Only visible cards mount a frame, and a bounded pool is recycled as
   you scroll.
+- **Markdown thumbnails**: `.md` and `.markdown` cards show a typeset document preview instead of a generic
+  file icon. Markdown is rendered to HTML on the fly (headings, lists, task lists, tables, code fences,
+  quotes, links and images) and served through the same sandboxed `page://` frame, with raw HTML escaped
+  and script URLs stripped.
 - **Treemap visualization** for the active folder: squarified tiles, drill-down, hover tooltip, large-file and
   extension/contents insights, hidden-file support, and cancellable scans. Folder tiles show their immediate
   children nested inside so a folder's makeup is visible without drilling in.
@@ -57,6 +70,9 @@ treemap visualization of any folder — and it builds as a portable executable f
   Model files that the software renderer understands (`.stl`, `.obj`, `.ply`, `.3mf`) open in a slowly rotating
   WebGL view instead of a static poster, so the shape can be inspected without leaving the app. Rotation can
   be turned off in **Settings → Appearance → Rotate 3D models**, which freezes the current three-quarter view.
+  3MF files keep their material colors in the live view, and the metadata list adds the model title,
+  designer and slicer, object/part/plate counts, triangle count (with painted triangles and simplification noted),
+  world extent in millimeters, and a swatch list of the materials or filaments with their share of the surface.
 - **Media previews and playlist**: audio waveforms with duration, bitrate, sample rate, and channels
   (click the waveform to start playback at that point), while list view draws a faint waveform behind the
   name of each audio file; video frame previews with hover scrubbing over
@@ -73,7 +89,11 @@ treemap visualization of any folder — and it builds as a portable executable f
   selected the next add creates and selects a new one. Picking an existing playlist loads it into the
   player, removing a track from the queue updates the selected playlist, and the picker can start a new
   playlist or delete the current one. Turn on **Settings → Appearance → Playlists in sidebar** to list
-  saved playlists under Bookmarks in the left panel; clicking one opens it in the player.
+  saved playlists under Bookmarks in the left panel; clicking one opens it in the player, and the **+**
+  beside the section heading starts a new playlist. Right-click a playlist to expand its tracks in the
+  sidebar — clicking a track plays that file and highlights it while it is playing; right-click again to
+  collapse. Drag audio or video files from the grid or list onto a listed playlist to add them, or drop
+  files from another application onto it.
 - **Search** the current folder instantly, or recurse into subfolders with gitignore-aware walking. Which of
   the two the search box does is a setting (**Settings → Browsing → Search subfolders**); the scope button next
   to the box flips the same switch, and the choice is remembered across sessions.
@@ -81,8 +101,13 @@ treemap visualization of any folder — and it builds as a portable executable f
   subfolder/file counts for folders and archives, and bounding-box dimensions for 3D models (`.obj`, `.stl`,
   `.ply`, `.3mf`, `.gltf`, `.glb`, `.off`). Values load lazily for visible rows only and are cached per file.
   The Kind column names the extension for files that match no known kind (`File: XYZ`).
+- **List scrolling gestures**: `Ctrl+Wheel` starts a slow line-by-line drift up or down that continues until the
+  wheel turns the other way or Ctrl is released. `Ctrl+Middle click` toggles the autoscroll anchor: a circle-with-
+  arrows marker appears where you clicked, moving the pointer away from it glides the list at a speed matching the
+  distance, and clicking it again or left-clicking exits.
 - **File operations**: create folder, rename, copy/cut/paste with collision-safe names, reveal, properties,
-  and delete to the system Trash.
+  and delete to the system Trash. Right-clicking a folder segment in the breadcrumb path opens the same
+  folder menu as right-clicking that folder in the grid or list, without disturbing the current selection.
 - **System Menu** (Windows): right-click any drive, file or folder — including treemap tiles — and open
   the real shell context menu, with shell extensions and submenus, as a submenu of the app menu.
 - **File Explorer integration** (Windows): **Settings → Windows integration → Add AltFile Context Menu Items**
@@ -172,6 +197,8 @@ the executable at compile time.
 | `Ctrl+Tab` | Next tab |
 | `Ctrl+P` | Toggle preview pane |
 | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` | Grid / list / visualization |
+| `Ctrl+Wheel` | Zoom grid cards / drift-scroll the list |
+| `Ctrl+Middle click` | Toggle list autoscroll (panning) |
 | `Ctrl+Shift+N` | New folder |
 | `Ctrl+F` or `/` | Focus search |
 | `Ctrl+A` | Select all |
@@ -183,6 +210,9 @@ the executable at compile time.
 | `Delete` | Move selection to Trash |
 | `Enter` | Open focused item |
 | Arrows, `Home`, `End`, `PageUp`, `PageDown` | Move focus (hold `Shift` to extend selection) |
+| `Menu` (application key) | Open the context menu at the current focus; the command palette opens when nothing is selected |
+| `Ctrl+Menu` | Command palette, bypassing the context menu |
+| `Alt+Menu` | Open the window (title bar) menu on Windows |
 | `Escape` | Clear search / selection, or close overlays |
 
 ## How it works
@@ -203,23 +233,30 @@ the executable at compile time.
   `font://` / `http://font.localhost` protocol so the UI can register them as live `FontFace` specimens.
 - `src-tauri/src/pages.rs` — serves an HTML file and its sibling assets (CSS, images, fonts, media) over the
   `page://` / `http://page.localhost` protocol so grid cards can render the page in a sandboxed frame.
+  Markdown files are converted to a styled HTML document by `md.rs` before being served the same way.
+- `src-tauri/src/md.rs` — the Markdown subset renderer used for `.md` card previews: headings, fences,
+  lists, tables, quotes, links and images, with raw HTML escaped and `javascript:` targets rejected.
 - `src-tauri/src/settings.rs` — atomic JSON settings/session storage.
 - `src-tauri/src/lib.rs` — app bootstrap, including the per-user Explorer registration under
   `Directory\shell\AltFileExplore`, and single-instance forwarding: a second launch with `--path` focuses the
   running window, navigates it, and exits.
-- `src-tauri/src/mesh.rs` — mesh parsing for OBJ, STL (ASCII and binary), PLY (ASCII and binary), 3MF
-  (its own ZIP + XML reader) and glTF/GLB/OFF: flat triangle lists for the renderer, bounding-box extents
-  for the Details column, and sampled triangle corners streamed to the preview viewer as a binary payload.
+- `src-tauri/src/mesh.rs` — mesh parsing for OBJ, STL (ASCII and binary), PLY (ASCII and binary) and
+  glTF/GLB/OFF: flat triangle lists for the renderer, bounding-box extents for the Details column, and
+  sampled triangle corners streamed to the preview viewer as a binary payload (with per-facet colors and a
+  scene summary for 3MF).
+- `src-tauri/src/threemf.rs` — the 3MF reader: its own ZIP + XML scanner, multi-file packages, build items,
+  components and transforms, spec materials, Bambu/Orca and PrusaSlicer configs, and painted-region decoding.
 - `src-tauri/src/render.rs` — the software rasterizer behind model thumbnails: orthographic fit, a 2×
   supersampled z-buffer, two-sided Lambert shading and depth fade, so a thumbnail needs no shell handler or GPU.
 - `src-tauri/src/archive.rs` — header-only archive summaries for the cards, preview pane and Details column:
   ZIP central directory (including Zip64), TAR block headers, gzip/bzip2-decompressed tar streams, plain
   gzip/bzip2, RAR 4/5 block walks, and 7Z headers (decoded through `sevenz-rust2` when the header is encoded).
-  It also votes on a content type from entry extensions.
+  Encryption flags (ZIP general-purpose bit 0, RAR 4/5 encryption headers, 7Z AES coders) mark an archive as
+  locked so the UI can replace contents with a padlock. It also votes on a content type from entry extensions.
 - `ui/js/` — the application: `files.js` (rendering, selection, lazy thumbnails), `fonts.js` (font specimens),
-  `pages.js` (live sandboxed HTML card thumbnails), `details.js` (the smart Details column), `model.js`
-  (rotating WebGL model preview), `viz.js` (treemap), `preview.js`, `ops.js`, `palette.js`, `settings.js`,
-  and `main.js` (navigation, tabs, shortcuts).
+  `pages.js` (live sandboxed HTML and rendered Markdown card thumbnails), `details.js` (the smart Details
+  column), `model.js` (rotating WebGL model preview), `viz.js` (treemap), `preview.js`, `ops.js`,
+  `palette.js`, `settings.js`, and `main.js` (navigation, tabs, shortcuts).
 
 Data locations:
 

@@ -31,16 +31,19 @@ const UP = [
 const VERTEX_300 = `#version 300 es
 in vec3 aPos;
 in vec3 aNormal;
+in vec3 aColor;
 uniform vec3 uRight;
 uniform vec3 uUp;
 uniform vec3 uForward;
 uniform vec2 uScale;
 uniform float uDepth;
 out vec3 vNormal;
+out vec3 vColor;
 out float vDepth;
 void main() {
   vec3 p = vec3(dot(aPos, uRight), dot(aPos, uUp), dot(aPos, uForward));
   vNormal = vec3(dot(aNormal, uRight), dot(aNormal, uUp), dot(aNormal, uForward));
+  vColor = aColor;
   vDepth = p.z;
   gl_Position = vec4(p.x * uScale.x, p.y * uScale.y, p.z * uDepth, 1.0);
 }`;
@@ -48,6 +51,7 @@ void main() {
 const FRAGMENT_300 = `#version 300 es
 precision highp float;
 in vec3 vNormal;
+in vec3 vColor;
 in float vDepth;
 uniform float uRadius;
 out vec4 outColor;
@@ -58,28 +62,31 @@ void main() {
   vec3 fill = normalize(vec3(1.2, -0.3, -1.0));
   float diffuse = 0.20 + 0.66 * max(dot(n, key), 0.0) + 0.24 * max(dot(n, fill), 0.0);
   float fade = 1.0 - 0.30 * clamp((vDepth + uRadius) / (2.0 * uRadius), 0.0, 1.0);
-  vec3 tone = min(vec3(236.0, 240.0, 248.0) * diffuse, vec3(255.0)) * fade;
-  outColor = vec4(tone / 255.0, 1.0);
+  outColor = vec4(min(vColor * diffuse, vec3(1.0)) * fade, 1.0);
 }`;
 
 const VERTEX_100 = `attribute vec3 aPos;
 attribute vec3 aNormal;
+attribute vec3 aColor;
 uniform vec3 uRight;
 uniform vec3 uUp;
 uniform vec3 uForward;
 uniform vec2 uScale;
 uniform float uDepth;
 varying vec3 vNormal;
+varying vec3 vColor;
 varying float vDepth;
 void main() {
   vec3 p = vec3(dot(aPos, uRight), dot(aPos, uUp), dot(aPos, uForward));
   vNormal = vec3(dot(aNormal, uRight), dot(aNormal, uUp), dot(aNormal, uForward));
+  vColor = aColor;
   vDepth = p.z;
   gl_Position = vec4(p.x * uScale.x, p.y * uScale.y, p.z * uDepth, 1.0);
 }`;
 
 const FRAGMENT_100 = `precision mediump float;
 varying vec3 vNormal;
+varying vec3 vColor;
 varying float vDepth;
 uniform float uRadius;
 void main() {
@@ -89,8 +96,7 @@ void main() {
   vec3 fill = normalize(vec3(1.2, -0.3, -1.0));
   float diffuse = 0.20 + 0.66 * max(dot(n, key), 0.0) + 0.24 * max(dot(n, fill), 0.0);
   float fade = 1.0 - 0.30 * clamp((vDepth + uRadius) / (2.0 * uRadius), 0.0, 1.0);
-  vec3 tone = min(vec3(236.0, 240.0, 248.0) * diffuse, vec3(255.0)) * fade;
-  gl_FragColor = vec4(tone / 255.0, 1.0);
+  gl_FragColor = vec4(min(vColor * diffuse, vec3(1.0)) * fade, 1.0);
 }`;
 
 function compile(gl, type, source) {
@@ -113,6 +119,8 @@ function buildProgram(gl, modern) {
   const program = gl.createProgram();
   gl.attachShader(program, vertex);
   gl.attachShader(program, fragment);
+  // Attribute 0 must stay an enabled array; a constant color attribute there is slow or broken on some drivers.
+  gl.bindAttribLocation(program, 0, 'aPos');
   gl.linkProgram(program);
   gl.deleteShader(vertex);
   gl.deleteShader(fragment);
@@ -124,6 +132,7 @@ function buildProgram(gl, modern) {
     program,
     pos: gl.getAttribLocation(program, 'aPos'),
     normal: gl.getAttribLocation(program, 'aNormal'),
+    color: gl.getAttribLocation(program, 'aColor'),
     right: gl.getUniformLocation(program, 'uRight'),
     up: gl.getUniformLocation(program, 'uUp'),
     forward: gl.getUniformLocation(program, 'uForward'),
@@ -162,13 +171,63 @@ function createRenderer(canvas) {
   return { gl, ...attrs };
 }
 
-function buildGeometry(buffer) {
-  const raw =
+const SCENE_MAGIC = 0x7fc0334d;
+const DEFAULT_TONE = [236, 240, 248];
+
+function floatsAt(bytes, offset, length) {
+  const start = bytes.byteOffset + offset;
+  if (start % 4 === 0) return new Float32Array(bytes.buffer, start, length);
+  return new Float32Array(bytes.slice(offset, offset + length * 4).buffer);
+}
+
+/** Plain payloads are bare corners; 3MF scenes carry a header, per-facet RGBA and info JSON. */
+function readPayload(buffer) {
+  const bytes =
     buffer instanceof ArrayBuffer
-      ? new Float32Array(buffer)
+      ? new Uint8Array(buffer)
       : ArrayBuffer.isView(buffer)
-        ? new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength >> 2)
+        ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
         : null;
+  if (!bytes || bytes.byteLength < 36) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, true) !== SCENE_MAGIC) {
+    return { corners: floatsAt(bytes, 0, bytes.byteLength >> 2), colors: null, info: null };
+  }
+  const count = view.getUint32(8, true);
+  const infoLength = view.getUint32(12, true);
+  const colorStart = 16 + count * 36;
+  const infoStart = colorStart + count * 4;
+  if (infoStart + infoLength > bytes.byteLength) return null;
+  let info = null;
+  try {
+    info = JSON.parse(new TextDecoder().decode(bytes.subarray(infoStart, infoStart + infoLength)));
+  } catch {
+    info = null;
+  }
+  return {
+    corners: floatsAt(bytes, 16, count * 9),
+    colors: bytes.subarray(colorStart, infoStart),
+    info,
+  };
+}
+
+function vertexColors(colors, facets) {
+  if (!colors || colors.length < facets * 4) return null;
+  const out = new Uint8Array(facets * 12);
+  let tinted = false;
+  for (let facet = 0; facet < facets; facet += 1) {
+    const src = facet * 4;
+    const lit = colors[src + 3] !== 0;
+    if (lit) tinted = true;
+    for (let channel = 0; channel < 3; channel += 1) {
+      const value = lit ? Math.round(24 + 0.9 * colors[src + channel]) : DEFAULT_TONE[channel];
+      for (let corner = 0; corner < 3; corner += 1) out[facet * 12 + corner * 4 + channel] = value;
+    }
+  }
+  return tinted ? out : null;
+}
+
+function buildGeometry(raw) {
   if (!raw) return null;
   const facets = Math.floor(raw.length / 9);
   if (!facets) return null;
@@ -270,6 +329,7 @@ export function stopModelPreview() {
   if (model.raf) cancelAnimationFrame(model.raf);
   try {
     model.gl.deleteBuffer(model.buffer);
+    if (model.colorBuffer) model.gl.deleteBuffer(model.colorBuffer);
     model.gl.deleteProgram(model.program);
   } catch {
     /* the context may already be gone */
@@ -313,24 +373,28 @@ export function setModelSpin(enabled) {
   }
 }
 
+/** Resolves with the 3MF scene info (or null) once the mesh is on screen. */
 export async function wireModelPreview(entry, body, token) {
   const holder = body.querySelector('.model-preview');
   const canvas = holder?.querySelector('.model-canvas');
-  if (!canvas) return;
+  if (!canvas) return null;
   stopModelPreview();
 
   let response = null;
   try {
     response = await api.meshGeometry(entry.path);
   } catch {
-    return;
+    return null;
   }
-  if (token !== state.preview.token || !canvas.isConnected) return;
+  if (token !== state.preview.token || !canvas.isConnected) return null;
 
-  const geometry = buildGeometry(response);
-  if (!geometry) return;
+  const payload = readPayload(response);
+  if (!payload) return null;
+  const { info } = payload;
+  const geometry = buildGeometry(payload.corners);
+  if (!geometry) return info;
   const renderer = createRenderer(canvas);
-  if (!renderer) return;
+  if (!renderer) return info;
 
   const { gl } = renderer;
   const buffer = gl.createBuffer();
@@ -341,10 +405,26 @@ export async function wireModelPreview(entry, body, token) {
   gl.enableVertexAttribArray(renderer.normal);
   gl.vertexAttribPointer(renderer.normal, 3, gl.FLOAT, false, STRIDE, 12);
 
+  let colorBuffer = null;
+  const tints = vertexColors(payload.colors, geometry.facets);
+  if (renderer.color >= 0) {
+    if (tints) {
+      colorBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, tints, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(renderer.color);
+      gl.vertexAttribPointer(renderer.color, 3, gl.UNSIGNED_BYTE, true, 4, 0);
+    } else {
+      gl.disableVertexAttribArray(renderer.color);
+      gl.vertexAttrib3f(renderer.color, ...DEFAULT_TONE.map((value) => value / 255));
+    }
+  }
+
   const model = {
     ...renderer,
     canvas,
     buffer,
+    colorBuffer,
     facets: geometry.facets,
     radius: geometry.radius,
     raf: 0,
@@ -356,4 +436,5 @@ export async function wireModelPreview(entry, body, token) {
   draw(model, 0);
   holder.classList.add('model-ready');
   startSpin(model);
+  return info;
 }

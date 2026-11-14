@@ -443,6 +443,7 @@ fn from_glb(bytes: &[u8]) -> Option<MeshBounds> {
 #[derive(Clone, Copy)]
 pub struct Facet {
     pub points: [[f32; 3]; 3],
+    pub color: Option<[u8; 3]>,
 }
 
 const MAX_FACETS: usize = 250_000;
@@ -451,7 +452,10 @@ fn make_facet(points: [[f32; 3]; 3]) -> Option<Facet> {
     points
         .iter()
         .all(|point| point.iter().all(|v| v.is_finite()))
-        .then_some(Facet { points })
+        .then_some(Facet {
+            points,
+            color: None,
+        })
 }
 
 fn facet_corners(first: [f32; 3], ids: &[usize], verts: &[[f32; 3]], out: &mut Vec<Facet>) {
@@ -738,171 +742,6 @@ fn facets_ply(bytes: &[u8]) -> Vec<Facet> {
     out
 }
 
-fn xml_attrs(tag: &str) -> Vec<(String, String)> {
-    tag.split_whitespace()
-        .filter_map(|token| {
-            let (key, value) = token.split_once('=')?;
-            if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric()) {
-                return None;
-            }
-            let value = value.trim_matches(|c| c == '"' || c == '\'' || c == '/' || c == '>');
-            Some((key.to_owned(), value.to_owned()))
-        })
-        .collect()
-}
-
-fn attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    attrs
-        .iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value.as_str())
-}
-
-fn each_tag(text: &str, mut visit: impl FnMut(&str, &[(String, String)]) -> bool) {
-    let mut cursor = 0usize;
-    while let Some(relative) = text[cursor..].find('<') {
-        let start = cursor + relative;
-        let Some(end) = text[start..].find('>') else {
-            break;
-        };
-        let tag = &text[start..start + end];
-        cursor = start + end + 1;
-        if tag.starts_with('/') || tag.starts_with('?') || tag.starts_with('!') {
-            continue;
-        }
-        let attrs = xml_attrs(tag);
-        if !visit(tag, &attrs) {
-            return;
-        }
-    }
-}
-
-fn vertex_point(attrs: &[(String, String)]) -> Option<[f64; 3]> {
-    let point: Vec<f64> = ["x", "y", "z"]
-        .iter()
-        .filter_map(|axis| attr(attrs, axis).and_then(|value| value.parse::<f64>().ok()))
-        .collect();
-    if point.len() == 3 {
-        return Some([point[0], point[1], point[2]]);
-    }
-    None
-}
-
-fn from_3mf(text: &str) -> Option<MeshBounds> {
-    let mut bounds = Bounds::default();
-    let mut count = 0usize;
-    each_tag(text, &mut |tag: &str, attrs: &[(String, String)]| {
-        if tag.starts_with("<vertex") {
-            if let Some(point) = vertex_point(attrs) {
-                bounds.add(point);
-                count += 1;
-            }
-        }
-        count < MAX_VERTICES
-    });
-    bounds.finish()
-}
-
-fn facets_3mf_xml(text: &str) -> Vec<Facet> {
-    let mut verts: Vec<[f32; 3]> = Vec::new();
-    let mut out = Vec::new();
-    let mut base = 0usize;
-    each_tag(text, &mut |tag: &str, attrs: &[(String, String)]| {
-        if tag.starts_with("<object") || tag.starts_with("<mesh") {
-            base = verts.len();
-            return true;
-        }
-        if tag.starts_with("<vertex") {
-            if let (Some(point), true) = (vertex_point(attrs), verts.len() < MAX_VERTICES) {
-                verts.push([point[0] as f32, point[1] as f32, point[2] as f32]);
-            }
-            return true;
-        }
-        if tag.starts_with("<triangle") {
-            let ids: Vec<usize> = ["v1", "v2", "v3"]
-                .iter()
-                .filter_map(|name| {
-                    attr(attrs, name)
-                        .and_then(|value| value.parse::<usize>().ok())
-                        .and_then(|id| verts.get(base + id).map(|_| base + id))
-                })
-                .collect();
-            if ids.len() == 3 {
-                if let Some(first) = verts.get(ids[0]) {
-                    facet_corners(*first, &ids[1..], &verts, &mut out);
-                }
-            }
-        }
-        out.len() < MAX_FACETS
-    });
-    out
-}
-
-fn find_zip_end(bytes: &[u8]) -> Option<usize> {
-    let low = bytes.len().saturating_sub(66_000);
-    (low..bytes.len().saturating_sub(21))
-        .rev()
-        .find(|&start| bytes[start..start + 4] == *b"PK\x05\x06")
-}
-
-fn zip_model(bytes: &[u8]) -> Option<Vec<u8>> {
-    let eocd = find_zip_end(bytes)?;
-    let entries = u16::from_le_bytes(bytes[eocd + 10..eocd + 12].try_into().unwrap()) as usize;
-    let directory = u32::from_le_bytes(bytes[eocd + 16..eocd + 20].try_into().unwrap()) as usize;
-
-    let mut cursor = directory;
-    for _ in 0..entries {
-        let head = bytes.get(cursor..cursor + 46)?;
-        if &head[..4] != b"PK\x01\x02" {
-            return None;
-        }
-        let method = u16::from_le_bytes(bytes[cursor + 10..cursor + 12].try_into().unwrap());
-        let packed =
-            u32::from_le_bytes(bytes[cursor + 20..cursor + 24].try_into().unwrap()) as usize;
-        let name_len =
-            u16::from_le_bytes(bytes[cursor + 28..cursor + 30].try_into().unwrap()) as usize;
-        let extra_len =
-            u16::from_le_bytes(bytes[cursor + 30..cursor + 32].try_into().unwrap()) as usize;
-        let comment_len =
-            u16::from_le_bytes(bytes[cursor + 32..cursor + 34].try_into().unwrap()) as usize;
-        let local =
-            u32::from_le_bytes(bytes[cursor + 42..cursor + 46].try_into().unwrap()) as usize;
-        let name = std::str::from_utf8(bytes.get(cursor + 46..cursor + 46 + name_len)?).ok()?;
-        if name.rsplit('/').next() == Some("3dmodel.model") {
-            let head: [u8; 4] = bytes.get(local..local + 4)?.try_into().unwrap();
-            if head != [80, 75, 3, 4] {
-                return None;
-            }
-            let local_name =
-                u16::from_le_bytes(bytes[local + 26..local + 28].try_into().unwrap()) as usize;
-            let local_extra =
-                u16::from_le_bytes(bytes[local + 28..local + 30].try_into().unwrap()) as usize;
-            let data = local + 30 + local_name + local_extra;
-            let raw = bytes.get(data..data + packed)?;
-            if method == 0 {
-                return Some(raw.to_vec());
-            }
-            if method != 8 {
-                return None;
-            }
-            use std::io::Read;
-            let decoder = flate2::read::DeflateDecoder::new(raw);
-            let mut xml = Vec::new();
-            decoder.take(MAX_MESH_BYTES).read_to_end(&mut xml).ok()?;
-            return Some(xml);
-        }
-        cursor += 46 + name_len + extra_len + comment_len;
-    }
-    None
-}
-
-fn facets_3mf(bytes: &[u8]) -> Vec<Facet> {
-    match zip_model(bytes) {
-        Some(xml) => facets_3mf_xml(&String::from_utf8_lossy(&xml)),
-        None => Vec::new(),
-    }
-}
-
 pub fn facets(ext: &str, bytes: &[u8]) -> Vec<Facet> {
     match ext {
         "stl" => {
@@ -915,7 +754,9 @@ pub fn facets(ext: &str, bytes: &[u8]) -> Vec<Facet> {
         }
         "obj" => facets_obj(&String::from_utf8_lossy(bytes)),
         "ply" => facets_ply(bytes),
-        "3mf" => facets_3mf(bytes),
+        "3mf" => crate::threemf::load(bytes, MAX_FACETS)
+            .map(|scene| scene.facets)
+            .unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -941,7 +782,7 @@ fn measure(ext: &str, bytes: &[u8]) -> Option<MeshBounds> {
         }
         "ply" => from_ply(bytes),
         "glb" => from_glb(bytes),
-        "3mf" => zip_model(bytes).and_then(|xml| from_3mf(&String::from_utf8_lossy(&xml))),
+        "3mf" => crate::threemf::bounds(bytes),
         _ => {
             let text = String::from_utf8_lossy(bytes);
             match ext {
@@ -976,6 +817,9 @@ const MAX_PREVIEW_FACETS: usize = 1_000_000;
 /// Triangle corners as packed little-endian f32 triplets, sampled evenly when the mesh
 /// exceeds the preview budget so the whole object stays recognizable.
 fn preview_geometry(ext: &str, bytes: &[u8], max_facets: usize) -> Vec<u8> {
+    if ext == "3mf" {
+        return preview_3mf(bytes, max_facets);
+    }
     let facets = facets(ext, bytes);
     if facets.is_empty() || max_facets == 0 {
         return Vec::new();
@@ -989,6 +833,38 @@ fn preview_geometry(ext: &str, bytes: &[u8], max_facets: usize) -> Vec<u8> {
             }
         }
     }
+    out
+}
+
+// A NaN bit pattern, so it can never be mistaken for the first corner of a plain payload.
+const SCENE_MAGIC: u32 = 0x7FC0_334D;
+
+/// Header (magic, version, facet count, info length), packed corners, one RGBA per facet
+/// (alpha 0 = default tone), then the scene info as JSON.
+fn preview_3mf(bytes: &[u8], max_facets: usize) -> Vec<u8> {
+    let Some(scene) = crate::threemf::load(bytes, max_facets) else {
+        return Vec::new();
+    };
+    let info = serde_json::to_vec(&scene.info).unwrap_or_default();
+    let count = scene.facets.len();
+    let mut out = Vec::with_capacity(16 + count * 40 + info.len());
+    for word in [SCENE_MAGIC, 1, count as u32, info.len() as u32] {
+        out.extend_from_slice(&word.to_le_bytes());
+    }
+    for facet in &scene.facets {
+        for point in facet.points {
+            for value in point {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+    }
+    for facet in &scene.facets {
+        match facet.color {
+            Some([r, g, b]) => out.extend_from_slice(&[r, g, b, 255]),
+            None => out.extend_from_slice(&[0, 0, 0, 0]),
+        }
+    }
+    out.extend_from_slice(&info);
     out
 }
 
@@ -1181,104 +1057,5 @@ mod tests {
         assert_eq!(facets.len(), 2);
         assert_eq!(facets[0].points[2], [1.0, 1.0, 0.0]);
         assert_eq!(facets[1].points[0], [1.0, 1.0, 0.0]);
-    }
-
-    #[test]
-    fn reads_3mf_triangles() {
-        let xml = r#"<?xml version="1.0"?>
-<model><unit><object id="1"><mesh><vertices>
-<vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="1" y="2" z="0"/>
-</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></unit></model>"#;
-        let facets = facets_3mf_xml(xml);
-        assert_eq!(facets.len(), 1);
-        assert_eq!(facets[0].points[2], [1.0, 2.0, 0.0]);
-    }
-
-    #[test]
-    fn measures_3mf_vertices() {
-        let xml = r#"<model><object><mesh><vertices>
-<vertex x="0" y="1" z="2"/><vertex x="3" y="5" z="8"/>
-</vertices><triangles><triangle v1="0" v2="1" v3="0"/></triangles></mesh></object></model>"#;
-        let bounds = from_3mf(xml).unwrap();
-        assert_eq!((bounds.width, bounds.height, bounds.depth), (3.0, 4.0, 6.0));
-    }
-
-    #[test]
-    fn reads_3mf_objects_separately() {
-        let xml = r#"<model>
-<object id="1"><mesh><vertices>
-<vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="1" y="1" z="0"/>
-</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>
-<object id="2"><mesh><vertices>
-<vertex x="5" y="5" z="5"/><vertex x="6" y="5" z="5"/><vertex x="6" y="6" z="5"/>
-</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>
-</model>"#;
-        let facets = facets_3mf_xml(xml);
-        assert_eq!(facets.len(), 2);
-        assert_eq!(facets[1].points[0], [5.0, 5.0, 5.0]);
-    }
-
-    #[test]
-    fn inflates_3mf_zip_entries() {
-        let xml = r#"<model><object><mesh><vertices>
-<vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/>
-</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></model>"#;
-        let archive = zip_with_model(xml);
-        let facets = facets_3mf(&archive);
-        assert_eq!(facets.len(), 1);
-        assert_eq!(facets[0].points[1], [1.0, 0.0, 0.0]);
-    }
-
-    fn central_entry(name: &[u8], method: u16, packed: u32, original: u32, local: u32) -> Vec<u8> {
-        let mut entry = Vec::new();
-        entry.extend_from_slice(&[0x50, 0x4b, 0x01, 0x02]);
-        entry.extend_from_slice(&[20, 0, 20, 0, 0, 0]);
-        entry.extend_from_slice(&method.to_le_bytes());
-        entry.extend_from_slice(&[0; 8]);
-        entry.extend_from_slice(&packed.to_le_bytes());
-        entry.extend_from_slice(&original.to_le_bytes());
-        entry.extend_from_slice(&(name.len() as u16).to_le_bytes());
-        entry.extend_from_slice(&[0; 12]);
-        entry.extend_from_slice(&local.to_le_bytes());
-        entry.extend_from_slice(name);
-        entry
-    }
-
-    fn zip_with_model(xml: &str) -> Vec<u8> {
-        use std::io::Write;
-        let mut compressed = Vec::new();
-        {
-            let mut encoder =
-                flate2::write::DeflateEncoder::new(&mut compressed, flate2::Compression::default());
-            encoder.write_all(xml.as_bytes()).unwrap();
-        }
-        let name = b"3dmodel.model";
-        let mut out = Vec::new();
-        out.extend_from_slice(&[0x50, 0x4b, 0x03, 0x04]);
-        out.extend_from_slice(&[20, 0, 0, 0]);
-        out.extend_from_slice(&[8, 0]);
-        out.extend_from_slice(&[0; 8]);
-        out.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
-        out.extend_from_slice(&(xml.len() as u32).to_le_bytes());
-        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
-        out.extend_from_slice(&[0, 0]);
-        out.extend_from_slice(name);
-        out.extend_from_slice(&compressed);
-
-        let directory = out.len() as u32;
-        out.extend_from_slice(&central_entry(
-            name,
-            8,
-            compressed.len() as u32,
-            xml.len() as u32,
-            0,
-        ));
-        let size = out.len() as u32 - directory;
-        out.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
-        out.extend_from_slice(&[0, 0, 0, 0, 1, 0, 1, 0]);
-        out.extend_from_slice(&size.to_le_bytes());
-        out.extend_from_slice(&directory.to_le_bytes());
-        out.extend_from_slice(&[0, 0]);
-        out
     }
 }

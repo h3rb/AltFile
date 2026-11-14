@@ -105,6 +105,12 @@ async function resolveDetail(job) {
     case 'archive': {
       const summary = await api.archiveSummary(job.path);
       if (!summary) return null;
+      if (summary.locked) {
+        return {
+          html: `<span class="detail-pair detail-locked">${icon('lock', 11)}</span>`,
+          title: `${summary.format} · password-protected archive`,
+        };
+      }
       const mark = summary.truncated ? '+' : '';
       return {
         html: pair('fileText', summary.files, mark) + pair('folder', summary.folders, mark),

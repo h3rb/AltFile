@@ -1,7 +1,7 @@
 import { pageUrl } from './api.js';
 import { esc } from './util.js';
 
-const PAGE_EXTS = new Set(['html', 'htm']);
+const PAGE_EXTS = new Set(['html', 'htm', 'md', 'markdown']);
 const PAGE_WIDTH = 1024;
 const MAX_FRAMES = 16;
 

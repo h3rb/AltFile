@@ -141,10 +141,13 @@ pub fn render(facets: &[Facet], size: u32) -> Option<RgbImage> {
             normal
         };
         let diffuse = 0.20 + 0.66 * dot(lit, key).max(0.0) + 0.24 * dot(lit, fill).max(0.0);
+        let base = facet.color.map_or([236.0, 240.0, 248.0], |color| {
+            color.map(|channel| 24.0 + 0.9 * channel as f32)
+        });
         let tone = [
-            (236.0 * diffuse).min(255.0),
-            (240.0 * diffuse).min(255.0),
-            (248.0 * diffuse).min(255.0),
+            (base[0] * diffuse).min(255.0),
+            (base[1] * diffuse).min(255.0),
+            (base[2] * diffuse).min(255.0),
         ];
 
         let corners: [Projected; 3] = facet.points.each_ref().map(|point| {
@@ -299,9 +302,11 @@ mod tests {
         for face in faces {
             facets.push(Facet {
                 points: [corners[face[0]], corners[face[1]], corners[face[2]]],
+                color: None,
             });
             facets.push(Facet {
                 points: [corners[face[0]], corners[face[2]], corners[face[3]]],
+                color: None,
             });
         }
         facets

@@ -699,8 +699,8 @@ function navMenu(path, x, y) {
   });
 }
 
-function entryMenu(entry, x, y) {
-  const list = files.selectedEntries();
+function entryMenu(entry, x, y, selection = null) {
+  const list = selection === null ? files.selectedEntries() : selection;
   const targets = list.length ? list : [entry];
   const single = targets.length === 1;
   const playable = targets.filter((item) => !item.isDir && (item.kind === 'audio' || item.kind === 'video'));
@@ -757,13 +757,13 @@ function entryMenu(entry, x, y) {
         label: targets.length > 1 ? `Copy ${targets.length} items` : 'Copy',
         icon: 'copy',
         shortcut: 'Ctrl+C',
-        onClick: () => ops.copySelection(false),
+        onClick: () => ops.copySelection(false, targets),
       },
       {
         label: targets.length > 1 ? `Cut ${targets.length} items` : 'Cut',
         icon: 'cut',
         shortcut: 'Ctrl+X',
-        onClick: () => ops.copySelection(true),
+        onClick: () => ops.copySelection(true, targets),
       },
       { label: 'Copy path', icon: 'clipboard', onClick: () => ops.copyEntryPaths(targets) },
       { separator: true },
@@ -792,6 +792,42 @@ function entryMenu(entry, x, y) {
   });
 }
 
+function openKeyboardMenu() {
+  const contextual = document.activeElement?.closest?.(
+    '.nav-item[data-path], .nav-item[data-playlist-id], .playlist-track, .crumb[data-path], .tab[data-tab-id]'
+  );
+  if (contextual) {
+    const box = contextual.getBoundingClientRect();
+    contextual.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: box.left + box.width / 2,
+        clientY: box.top + box.height / 2,
+      })
+    );
+    if (document.querySelector('.menu')) return;
+  }
+  const selected = files.selectedEntries();
+  if (selected.length) {
+    const entry = files.focusedEntry() || selected[0];
+    const el = document.querySelector('#files-scroll .file-card.focused, #files-scroll .file-row.focused');
+    const box = el?.getBoundingClientRect() || document.getElementById('files-scroll')?.getBoundingClientRect();
+    if (box) {
+      entryMenu(entry, box.left + box.width / 2, box.top + Math.min(box.height / 2, 48));
+      return;
+    }
+  }
+  openPalette();
+}
+
+function crumbMenu(path, x, y) {
+  const sep = state.app?.sep || (navigator.userAgent.includes('Windows') ? '\\' : '/');
+  const parts = splitPath(path, sep);
+  const name = parts.length ? parts[parts.length - 1].label : path;
+  entryMenu({ path, name: name || path, isDir: true, kind: 'folder' }, x, y, []);
+}
+
 function openPalette() {
   closeMenu();
   palette.openPalette();
@@ -801,6 +837,14 @@ function isEditable(target) {
   if (!target) return false;
   const tag = target.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+// WebView2 also opens its own context menu for the Menu key; a trusted
+// keyboard contextmenu (button -1) shortly after our handler is that menu.
+let menuKeyAt = 0;
+
+function suppressNativeMenuKey(event) {
+  if (event.button === -1 && performance.now() - menuKeyAt < 600) event.preventDefault();
 }
 
 function onKeyDown(event) {
@@ -832,6 +876,25 @@ function onKeyDown(event) {
   if (key === 'Escape' && pathEditing) {
     event.preventDefault();
     endPathEdit(false);
+    return;
+  }
+  if (key === 'ContextMenu' || key === 'Apps') {
+    if (mod) {
+      event.preventDefault();
+      menuKeyAt = performance.now();
+      openPalette();
+      return;
+    }
+    if (event.altKey) {
+      event.preventDefault();
+      menuKeyAt = performance.now();
+      if (state.app?.platform === 'windows') api.openWindowMenu().catch(() => {});
+      return;
+    }
+    if (isEditable(event.target)) return;
+    event.preventDefault();
+    menuKeyAt = performance.now();
+    openKeyboardMenu();
     return;
   }
   if (isEditable(event.target)) return;
@@ -1056,6 +1119,13 @@ function bindStaticEvents() {
     const crumb = event.target.closest('.crumb[data-path]');
     if (crumb) navigate(crumb.dataset.path);
   });
+  document.getElementById('crumbs')?.addEventListener('contextmenu', (event) => {
+    const crumb = event.target.closest('.crumb[data-path]');
+    if (!crumb) return;
+    event.preventDefault();
+    event.stopPropagation();
+    crumbMenu(crumb.dataset.path, event.clientX, event.clientY);
+  });
   document.getElementById('path-edit')?.addEventListener('click', () => {
     if (pathEditing) endPathEdit(false);
     else beginPathEdit();
@@ -1117,6 +1187,7 @@ function bindStaticEvents() {
   });
 
   document.addEventListener('keydown', onKeyDown);
+  window.addEventListener('contextmenu', suppressNativeMenuKey, true);
   window.addEventListener('beforeunload', () => saveSessionNow());
 }
 
@@ -1155,7 +1226,10 @@ function assignBridge() {
     closeTab,
     playMedia: player.playEntry,
     addToPlaylist: player.addToPlaylist,
+    addPathsToPlaylist: player.addPathsToPlaylist,
     openPlaylist: player.openPlaylistById,
+    playPlaylistTrack: player.playPlaylistTrack,
+    newPlaylist: player.newPlaylist,
     showPlaylist: player.showQueue,
     togglePlayback: player.togglePlay,
     entryMenu,

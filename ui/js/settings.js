@@ -18,6 +18,8 @@ const SHORTCUTS = [
   ['Ctrl', '1', 'Grid view'],
   ['Ctrl', '2', 'List view'],
   ['Ctrl', '3', 'Visualize'],
+  ['Ctrl', 'Wheel', 'Zoom grid / drift list'],
+  ['Ctrl', 'Middle', 'Toggle autoscroll'],
   ['Ctrl', 'C', 'Copy selection'],
   ['Ctrl', 'X', 'Cut selection'],
   ['Ctrl', 'V', 'Paste'],
@@ -28,6 +30,9 @@ const SHORTCUTS = [
   ['Alt', '↑', 'Up one folder'],
   ['/', '', 'Filter this folder'],
   ['Esc', '', 'Clear search / selection'],
+  ['Menu', '', 'Context menu for focus'],
+  ['Ctrl', 'Menu', 'Command palette'],
+  ['Alt', 'Menu', 'Window menu'],
 ];
 
 const rerender = debounce(() => renderFiles(), 220);

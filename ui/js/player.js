@@ -467,6 +467,46 @@ export function addToPlaylist(entries) {
   return added;
 }
 
+export function addPathsToPlaylist(playlistId, paths) {
+  const playlist = state.playlists.find((entry) => entry.id === playlistId);
+  if (!playlist) return 0;
+  const seen = new Set(playlist.items.map((item) => item.path.toLowerCase()));
+  let added = 0;
+  let invalid = 0;
+  let duplicate = 0;
+  for (const raw of Array.isArray(paths) ? paths : [paths]) {
+    const path = String(raw || '');
+    if (!path) continue;
+    const kind = mediaKindOf(path);
+    if (!kind) {
+      invalid += 1;
+      continue;
+    }
+    const key = path.toLowerCase();
+    if (seen.has(key)) {
+      duplicate += 1;
+      continue;
+    }
+    seen.add(key);
+    playlist.items.push({ path, name: basename(path), kind });
+    added += 1;
+  }
+  if (added) {
+    playlist.updatedAt = Date.now();
+    scheduleSave();
+    app.renderSidebar?.();
+    toast(`Added ${added} item${added === 1 ? '' : 's'} to “${playlist.name}”`, {
+      type: 'success',
+      icon: 'playlist',
+    });
+  } else if (duplicate) {
+    toast('Already in the playlist', { type: 'info', icon: 'playlist' });
+  } else if (invalid) {
+    toast('Only audio and video files can be added to a playlist', { type: 'warn' });
+  }
+  return added;
+}
+
 function copyQueue() {
   return state.media.queue.map((item) => ({ path: item.path, name: item.name, kind: item.kind }));
 }
@@ -482,13 +522,13 @@ function nextPlaylistName() {
   return `Playlist ${index}`;
 }
 
-function selectPlaylist(playlist) {
+function selectPlaylist(playlist, { index = 0, autoplay = false } = {}) {
   if (!playlist) return;
   state.selectedPlaylistId = playlist.id;
   state.media.queue = playlist.items.map((item) => ({ ...item }));
   if (state.media.queue.length) {
-    state.media.index = 0;
-    playIndex(0, { autoplay: false, user: false });
+    state.media.index = clamp(index, 0, state.media.queue.length - 1);
+    playIndex(state.media.index, { autoplay, user: autoplay });
   } else {
     state.media.index = -1;
     clearEngine();
@@ -506,6 +546,12 @@ export function openPlaylistById(id) {
   selectPlaylist(state.playlists.find((playlist) => playlist.id === id));
 }
 
+export function playPlaylistTrack(id, index) {
+  const playlist = state.playlists.find((item) => item.id === id);
+  if (!playlist || !playlist.items.length) return;
+  selectPlaylist(playlist, { index, autoplay: true });
+}
+
 function startNewPlaylist() {
   state.selectedPlaylistId = null;
   state.media.queue = [];
@@ -517,6 +563,17 @@ function startNewPlaylist() {
   updateQueue();
   scheduleSave();
   app.renderSidebar?.();
+}
+
+export function newPlaylist() {
+  const playlist = { id: uid(), name: nextPlaylistName(), items: [], updatedAt: Date.now() };
+  state.playlists.push(playlist);
+  state.selectedPlaylistId = playlist.id;
+  scheduleSave();
+  app.renderSidebar?.();
+  renderBar();
+  toast(`Created “${playlist.name}”`, { type: 'success', icon: 'playlist' });
+  return playlist;
 }
 
 function showPlaylistPicker(anchor) {

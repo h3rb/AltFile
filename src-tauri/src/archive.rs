@@ -31,6 +31,7 @@ pub struct Summary {
     pub kind: String,
     pub top: Vec<String>,
     pub truncated: bool,
+    pub locked: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -111,6 +112,7 @@ struct Collector {
     top: Vec<String>,
     entries: usize,
     truncated: bool,
+    locked: bool,
 }
 
 impl Collector {
@@ -173,9 +175,14 @@ impl Collector {
             files: self.files,
             folders: self.folders.len(),
             bytes: self.bytes,
-            kind: self.guess_kind().to_string(),
+            kind: if self.locked {
+                "Encrypted".to_string()
+            } else {
+                self.guess_kind().to_string()
+            },
             top: self.top,
             truncated: self.truncated,
+            locked: self.locked,
         }
     }
 }
@@ -260,8 +267,13 @@ fn read_zip(file: &mut File, col: &mut Collector) -> Option<()> {
                 size = zip64;
             }
         }
+        let flags = le16(&dir, at + 8);
         let name = String::from_utf8_lossy(&dir[start..end]).into_owned();
-        if !col.add(&name, name.ends_with('/'), size) {
+        let is_dir = name.ends_with('/');
+        if !is_dir && flags & 0x0001 != 0 {
+            col.locked = true;
+        }
+        if !col.add(&name, is_dir, size) {
             break;
         }
         at = end + extra_len + comment_len;
@@ -535,7 +547,12 @@ fn read_rar4(file: &mut File, col: &mut Collector) -> Option<()> {
         if body_len > body.len() {
             file.seek(SeekFrom::Current((body_len - body.len()) as i64)).ok()?;
         }
-        if head_type == 0x74 && body.len() >= 25 {
+        if head_type == 0x73 {
+            if head_flags & 0x0080 != 0 {
+                col.locked = true;
+                return Some(());
+            }
+        } else if head_type == 0x74 && body.len() >= 25 {
             let unp_size = le32(&body, 4) as u64;
             let name_len = le16(&body, 19) as usize;
             let mut offset = 25;
@@ -548,6 +565,9 @@ fn read_rar4(file: &mut File, col: &mut Collector) -> Option<()> {
             if offset + name_len <= body.len() {
                 let name = String::from_utf8_lossy(&body[offset..offset + name_len]).into_owned();
                 let is_dir = head_flags & 0x00E0 == 0x00E0;
+                if !is_dir && head_flags & 0x0004 != 0 {
+                    col.locked = true;
+                }
                 if !col.add(&name, is_dir, if is_dir { 0 } else { unp_size }) {
                     return Some(());
                 }
@@ -581,8 +601,13 @@ fn read_rar5(file: &mut File, col: &mut Collector) -> Option<()> {
         let mut cursor = Cursor::new(&header);
         let head_type = cursor.vint()?;
         let flags = cursor.vint()?;
-        if flags & 0x0001 != 0 {
-            cursor.vint()?; // extra area size; the area is inside the header block
+        let extra_size = if flags & 0x0001 != 0 { cursor.vint()? } else { 0 };
+        if extra_size > 0 {
+            if let Some(start) = header.len().checked_sub(extra_size as usize) {
+                if start >= cursor.at && rar5_extra_locked(&header[start..]) {
+                    col.locked = true;
+                }
+            }
         }
         let data_size = if flags & 0x0002 != 0 { cursor.vint()? } else { 0 };
         if head_type == 2 {
@@ -612,17 +637,58 @@ fn read_rar5(file: &mut File, col: &mut Collector) -> Option<()> {
     }
 }
 
+fn rar5_extra_locked(extra: &[u8]) -> bool {
+    let mut at = 0;
+    while at < extra.len() {
+        let mut cursor = Cursor::new(&extra[at..]);
+        let Some(size) = cursor.vint() else {
+            return false;
+        };
+        let Some(kind) = cursor.vint() else {
+            return false;
+        };
+        if kind == 1 {
+            // File encryption record.
+            return true;
+        }
+        if size == 0 || size as usize > extra.len() - at {
+            return false;
+        }
+        at += size as usize;
+    }
+    false
+}
+
+fn sevenz_error_locked(err: &sevenz_rust2::Error) -> bool {
+    match err {
+        sevenz_rust2::Error::PasswordRequired | sevenz_rust2::Error::MaybeBadPassword(_) => true,
+        // Opening a header-encrypted archive without a password surfaces the header's AES coder.
+        sevenz_rust2::Error::UnsupportedCompressionMethod(method) => method.contains("AES"),
+        _ => false,
+    }
+}
+
 fn read_7z(path: &Path, col: &mut Collector) -> Option<()> {
     let file = File::open(path).ok()?;
-    let reader = sevenz_rust2::ArchiveReader::new_with_memory_limit(
+    let reader = match sevenz_rust2::ArchiveReader::new_with_memory_limit(
         BufReader::new(file),
         sevenz_rust2::Password::empty(),
         64 * 1024,
-    )
-    .ok()?;
-    for entry in &reader.archive().files {
+    ) {
+        Ok(reader) => reader,
+        Err(err) if sevenz_error_locked(&err) => {
+            col.locked = true;
+            return Some(());
+        }
+        Err(_) => return None,
+    };
+    let archive = reader.archive();
+    for (index, entry) in archive.files.iter().enumerate() {
         if entry.is_anti_item {
             continue;
+        }
+        if !entry.is_directory && archive.is_file_encrypted(index) {
+            col.locked = true;
         }
         let size = if entry.is_directory { 0 } else { entry.size };
         if !col.add(&entry.name, entry.is_directory, size) {
@@ -713,7 +779,7 @@ pub fn summarize(path: &Path) -> Option<Summary> {
         Format::Rar => read_rar(&mut File::open(path).ok()?, &mut col)?,
         Format::SevenZ => read_7z(path, &mut col)?,
     }
-    if col.entries == 0 && matches!(format, Format::Rar) {
+    if col.entries == 0 && !col.locked && matches!(format, Format::Rar) {
         return None;
     }
     Some(col.finish(format, sniffed_tar))
@@ -733,6 +799,21 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+
+    #[test]
+    fn recognizes_encrypted_sevenz_errors() {
+        assert!(sevenz_error_locked(&sevenz_rust2::Error::PasswordRequired));
+        assert!(sevenz_error_locked(&sevenz_rust2::Error::MaybeBadPassword(
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "crc")
+        )));
+        assert!(sevenz_error_locked(
+            &sevenz_rust2::Error::UnsupportedCompressionMethod("AES256_SHA256".into())
+        ));
+        assert!(!sevenz_error_locked(
+            &sevenz_rust2::Error::UnsupportedCompressionMethod("PPMd".into())
+        ));
+        assert!(!sevenz_error_locked(&sevenz_rust2::Error::ChecksumVerificationFailed));
+    }
 
     fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("altfe-archive-{}", std::process::id()));
@@ -809,6 +890,38 @@ mod tests {
         out
     }
 
+    fn zip_encrypted_bytes(name: &str) -> Vec<u8> {
+        let name = name.as_bytes();
+        let mut out = Vec::new();
+        out.extend_from_slice(b"PK\x01\x02");
+        out.extend_from_slice(&20u16.to_le_bytes());
+        out.extend_from_slice(&20u16.to_le_bytes());
+        out.extend_from_slice(&0x0001u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&64u32.to_le_bytes());
+        out.extend_from_slice(&64u32.to_le_bytes());
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(name);
+        let cd_size = out.len() as u32;
+        out.extend_from_slice(b"PK\x05\x06");
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&cd_size.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+
     fn tar_header(name: &str, size: u64, typeflag: u8) -> [u8; 512] {
         let mut block = [0u8; 512];
         block[..name.len()].copy_from_slice(name.as_bytes());
@@ -837,7 +950,7 @@ mod tests {
         out
     }
 
-    fn rar4_header(name: &str, unp_size: u32, is_dir: bool) -> Vec<u8> {
+    fn rar4_header(name: &str, unp_size: u32, is_dir: bool, extra_flags: u16) -> Vec<u8> {
         let mut body = Vec::new();
         body.extend_from_slice(&0u32.to_le_bytes());
         body.extend_from_slice(&unp_size.to_le_bytes());
@@ -852,7 +965,7 @@ mod tests {
         let mut out = Vec::new();
         out.extend_from_slice(&0u16.to_le_bytes());
         out.push(0x74);
-        let flags: u16 = if is_dir { 0x00E0 } else { 0 };
+        let flags: u16 = (if is_dir { 0x00E0 } else { 0 }) | extra_flags;
         out.extend_from_slice(&flags.to_le_bytes());
         out.extend_from_slice(&((7 + body.len()) as u16).to_le_bytes());
         out.extend_from_slice(&body);
@@ -867,12 +980,37 @@ mod tests {
         out.extend_from_slice(&13u16.to_le_bytes());
         out.extend_from_slice(&[0u8; 6]);
         for (name, size, is_dir) in files {
-            out.extend_from_slice(&rar4_header(name, *size, *is_dir));
+            out.extend_from_slice(&rar4_header(name, *size, *is_dir, 0));
         }
         out.extend_from_slice(&0u16.to_le_bytes());
         out.push(0x7B);
         out.extend_from_slice(&0u16.to_le_bytes());
         out.extend_from_slice(&7u16.to_le_bytes());
+        out
+    }
+
+    fn rar4_encrypted_bytes() -> Vec<u8> {
+        let mut out = b"Rar!\x1a\x07\x00".to_vec();
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.push(0x73);
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&13u16.to_le_bytes());
+        out.extend_from_slice(&[0u8; 6]);
+        out.extend_from_slice(&rar4_header("secret.txt", 128, false, 0x0004));
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.push(0x7B);
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&7u16.to_le_bytes());
+        out
+    }
+
+    fn rar4_header_encrypted_bytes() -> Vec<u8> {
+        let mut out = b"Rar!\x1a\x07\x00".to_vec();
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.push(0x73);
+        out.extend_from_slice(&0x0080u16.to_le_bytes());
+        out.extend_from_slice(&13u16.to_le_bytes());
+        out.extend_from_slice(&[0u8; 6]);
         out
     }
 
@@ -922,6 +1060,29 @@ mod tests {
         for (name, size, is_dir) in entries {
             out.extend(rar5_entry(name, *size, *is_dir));
         }
+        out.extend(rar5_block(5, 0, &vint(0)));
+        out
+    }
+
+    fn rar5_encrypted_bytes() -> Vec<u8> {
+        // One extra-area record: size 2 bytes, type 1 (file encryption).
+        let record = [0x02u8, 0x01];
+        let name = b"secret.txt";
+        let mut body = vint(record.len() as u64);
+        body.extend_from_slice(&vint(0));
+        body.extend_from_slice(&vint(0));
+        body.extend_from_slice(&vint(256));
+        body.extend_from_slice(&vint(0x20));
+        body.extend_from_slice(&vint(0));
+        body.extend_from_slice(&vint(0));
+        body.extend_from_slice(&vint(name.len() as u64));
+        body.extend_from_slice(name);
+        body.extend_from_slice(&record);
+        let mut out = b"Rar!\x1a\x07\x01\x00".to_vec();
+        let mut main = vint(0);
+        main.extend_from_slice(&vint(0));
+        out.extend(rar5_block(1, 0x05, &main));
+        out.extend(rar5_block(2, 0x03, &body));
         out.extend(rar5_block(5, 0, &vint(0)));
         out
     }
@@ -1157,7 +1318,30 @@ mod tests {
         assert_eq!(summary.bytes, 11);
         assert_eq!(summary.kind, "Documents");
         assert_eq!(summary.top, vec!["docs", "docs/readme.txt", "empty.txt"]);
+        assert!(!summary.locked);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn flags_encrypted_archives() {
+        let zip = temp_file("secret.zip", &zip_encrypted_bytes("secret.txt"));
+        let summary = summarize(&zip).unwrap();
+        assert!(summary.locked);
+        assert_eq!(summary.format, "ZIP");
+        assert_eq!(summary.kind, "Encrypted");
+        let _ = fs::remove_file(zip);
+
+        let rar4 = temp_file("secret.rar", &rar4_encrypted_bytes());
+        assert!(summarize(&rar4).unwrap().locked);
+        let _ = fs::remove_file(rar4);
+
+        let headers = temp_file("headers.rar", &rar4_header_encrypted_bytes());
+        assert!(summarize(&headers).unwrap().locked);
+        let _ = fs::remove_file(headers);
+
+        let rar5 = temp_file("secret5.rar", &rar5_encrypted_bytes());
+        assert!(summarize(&rar5).unwrap().locked);
+        let _ = fs::remove_file(rar5);
     }
 
     #[test]

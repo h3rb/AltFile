@@ -26,6 +26,14 @@ import {
 const LARGE_FILE = 64 * 1024 * 1024;
 const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
 const PAGE_SIZE = 1500;
+const CARD_MIN = 120;
+const CARD_MAX = 260;
+const CARD_STEP = 8;
+const WHEEL_ZOOM_THRESHOLD = 40;
+const DRIFT_SPEED = 85;
+const PAN_DEAD_ZONE = 10;
+const PAN_GAIN = 2.4;
+const PAN_MAX_SPEED = 1500;
 
 const THUMB_KINDS = new Set(['image', 'video', 'audio', 'exe', 'shortcut']);
 const THUMB_MODELS = new Set(['stl', 'obj', 'ply', '3mf']);
@@ -556,6 +564,8 @@ function emptyState(tab) {
 }
 
 export function renderFiles() {
+  stopDrift();
+  stopPanning();
   const scroll = scrollEl();
   const tab = activeTab();
   if (!scroll || !tab) return;
@@ -734,6 +744,17 @@ function attachThumb(img, url) {
   if (img.dataset.gifActive !== '1') img.src = url;
 }
 
+function showLockedThumb(el) {
+  if (!el || el.dataset.pdfLocked === '1') return;
+  el.dataset.pdfLocked = '1';
+  el.querySelector('img')?.remove();
+  const lock = document.createElement('div');
+  lock.className = 'lock-overlay';
+  lock.innerHTML = `${icon('lock', 26)}<span>Password protected</span>`;
+  el.append(lock);
+  el.title = 'Password-protected PDF';
+}
+
 function playCardGif(thumb) {
   if (!thumb || thumb.dataset.gifPlaying === '1') return;
   const img = thumb.querySelector('img');
@@ -820,13 +841,14 @@ function pumpThumbs() {
     api
       .thumbnail(job.path, job.size)
       .then((info) => {
-        const url = info && info.url ? info.url : null;
-        thumbCache.set(job.key, url);
+        const result = { url: info && info.url ? info.url : null, locked: Boolean(info && info.locked) };
+        thumbCache.set(job.key, result);
         if (thumbCache.size > MAX_CACHE) {
           const oldest = thumbCache.keys().next().value;
           if (oldest !== undefined) thumbCache.delete(oldest);
         }
-        if (url) attachThumb(job.img, url);
+        if (result.url) attachThumb(job.img, result.url);
+        else if (result.locked) showLockedThumb(job.img?.parentElement);
       })
       .catch(() => {
         thumbCache.set(job.key, null);
@@ -848,8 +870,9 @@ function loadThumb(el) {
   const size = thumbRequestSize();
   const key = `${path.toLowerCase()}|${mtime}|${size}`;
   if (thumbCache.has(key)) {
-    const url = thumbCache.get(key);
-    if (url) attachThumb(img, url);
+    const result = thumbCache.get(key);
+    if (result?.url) attachThumb(img, result.url);
+    else if (result?.locked) showLockedThumb(el);
     return;
   }
   thumbQueue.push({ key, path, size, img });
@@ -1014,6 +1037,16 @@ function applyArchive(el, summary) {
       note.hidden = false;
     }
     el.title = 'Archive index could not be read';
+    return;
+  }
+  if (summary.locked) {
+    el.querySelector('.archive-rows')?.remove();
+    el.querySelector('.archive-foot')?.remove();
+    const lock = document.createElement('div');
+    lock.className = 'lock-overlay archive-lock';
+    lock.innerHTML = `${icon('lock', 26)}<span>Password protected</span>`;
+    el.append(lock);
+    el.title = `${summary.format} · password-protected archive`;
     return;
   }
   const rows = el.querySelector('.archive-rows');
@@ -1441,6 +1474,140 @@ function onChipsClick(event) {
   button.blur();
 }
 
+let wheelZoomDelta = 0;
+let driftDirection = 0;
+let driftFrame = 0;
+let driftLast = 0;
+let panState = null;
+
+function setThumbSize(next) {
+  const value = clamp(Math.round(next / CARD_STEP) * CARD_STEP, CARD_MIN, CARD_MAX);
+  if (value === state.thumbSize) return;
+  state.thumbSize = value;
+  scrollEl()?.style.setProperty('--card-size', `${value}px`);
+  const range = document.getElementById('settings-thumb-size');
+  const label = document.getElementById('settings-thumb-value');
+  if (range) range.value = String(value);
+  if (label) label.textContent = `${value} px`;
+  scheduleSave();
+}
+
+function stepDrift(now) {
+  const scroll = scrollEl();
+  if (!scroll || !driftDirection) {
+    driftFrame = 0;
+    return;
+  }
+  if (driftLast) {
+    const dt = Math.min(64, now - driftLast) / 1000;
+    const max = scroll.scrollHeight - scroll.clientHeight;
+    scroll.scrollTop = clamp(scroll.scrollTop + driftDirection * DRIFT_SPEED * dt, 0, max);
+    if ((driftDirection > 0 && scroll.scrollTop >= max) || (driftDirection < 0 && scroll.scrollTop <= 0)) {
+      stopDrift();
+      return;
+    }
+  }
+  driftLast = now;
+  driftFrame = requestAnimationFrame(stepDrift);
+}
+
+function startDrift(direction) {
+  driftDirection = direction;
+  if (driftFrame) return;
+  driftLast = 0;
+  driftFrame = requestAnimationFrame(stepDrift);
+}
+
+function stopDrift() {
+  driftDirection = 0;
+  if (driftFrame) cancelAnimationFrame(driftFrame);
+  driftFrame = 0;
+  driftLast = 0;
+}
+
+function stepPan(now) {
+  const pan = panState;
+  if (!pan) return;
+  const scroll = scrollEl();
+  if (!scroll) {
+    stopPanning();
+    return;
+  }
+  if (pan.last && pan.speed) {
+    const dt = Math.min(64, now - pan.last) / 1000;
+    const max = scroll.scrollHeight - scroll.clientHeight;
+    scroll.scrollTop = clamp(scroll.scrollTop + pan.speed * dt, 0, max);
+  }
+  pan.last = now;
+  pan.frame = requestAnimationFrame(stepPan);
+}
+
+function startPanning(x, y) {
+  stopDrift();
+  stopPanning();
+  const anchor = document.createElement('div');
+  anchor.className = 'pan-anchor';
+  anchor.innerHTML = icon('autoscroll', 22);
+  anchor.style.left = `${x}px`;
+  anchor.style.top = `${y}px`;
+  document.body.append(anchor);
+  document.body.classList.add('panning');
+  panState = { anchor, y, speed: 0, frame: 0, last: 0 };
+  panState.frame = requestAnimationFrame(stepPan);
+}
+
+function stopPanning() {
+  if (!panState) return;
+  cancelAnimationFrame(panState.frame);
+  panState.anchor.remove();
+  document.body.classList.remove('panning');
+  panState = null;
+}
+
+function onCtrlWheel(event) {
+  if (!event.ctrlKey && !event.metaKey) return;
+  const tab = activeTab();
+  if (!tab) return;
+  if (tab.view === 'grid' && state.searchResults === null) {
+    event.preventDefault();
+    wheelZoomDelta += event.deltaMode === 1 ? event.deltaY * 40 : event.deltaY;
+    if (Math.abs(wheelZoomDelta) < WHEEL_ZOOM_THRESHOLD) return;
+    const direction = wheelZoomDelta < 0 ? 1 : -1;
+    wheelZoomDelta = 0;
+    setThumbSize(state.thumbSize + direction * CARD_STEP);
+    return;
+  }
+  if (tab.view === 'list') {
+    if (!event.deltaY) return;
+    event.preventDefault();
+    stopPanning();
+    startDrift(event.deltaY < 0 ? -1 : 1);
+  }
+}
+
+function onPanMouseDown(event) {
+  if (panState) {
+    if (event.button === 0 || event.button === 1) stopPanning();
+    return;
+  }
+  if (event.button !== 1 || (!event.ctrlKey && !event.metaKey)) return;
+  const tab = activeTab();
+  const scroll = scrollEl();
+  if (!tab || tab.view !== 'list' || !scroll || !scroll.contains(event.target)) return;
+  event.preventDefault();
+  startPanning(event.clientX, event.clientY);
+}
+
+function onPanMouseMove(event) {
+  if (!panState) return;
+  const offset = event.clientY - panState.y;
+  const magnitude = Math.abs(offset);
+  panState.speed =
+    magnitude <= PAN_DEAD_ZONE
+      ? 0
+      : (offset < 0 ? -1 : 1) * Math.min(PAN_MAX_SPEED, (magnitude - PAN_DEAD_ZONE) * PAN_GAIN);
+}
+
 export function initFiles() {
   const scroll = scrollEl();
   const head = document.getElementById('files-head');
@@ -1449,7 +1616,19 @@ export function initFiles() {
   scroll?.addEventListener('click', onClick);
   scroll?.addEventListener('dblclick', onDoubleClick);
   scroll?.addEventListener('contextmenu', onContextMenu);
+  scroll?.addEventListener('wheel', onCtrlWheel, { passive: false });
   scroll?.addEventListener('pointerdown', onPointerDown);
+  window.addEventListener('mousedown', onPanMouseDown, true);
+  window.addEventListener('mousemove', onPanMouseMove);
+  window.addEventListener('keyup', (event) => {
+    if (event.key === 'Control' || event.key === 'Meta') stopDrift();
+  });
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      stopDrift();
+      stopPanning();
+    }
+  });
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerup', onPointerUp);
   window.addEventListener('pointercancel', onPointerUp);
@@ -1460,7 +1639,11 @@ export function initFiles() {
   scroll?.addEventListener('mouseout', onCardGifOut);
   scroll?.addEventListener('mouseover', onCardVideoOver);
   scroll?.addEventListener('mouseout', onCardVideoOut);
-  window.addEventListener('blur', () => stopCardVideo(hoverVideoThumb));
+  window.addEventListener('blur', () => {
+    stopCardVideo(hoverVideoThumb);
+    stopDrift();
+    stopPanning();
+  });
   head?.addEventListener('click', onHeadClick);
   chips?.addEventListener('click', onChipsClick);
   pane?.addEventListener('click', (event) => {

@@ -19,6 +19,7 @@ pub struct ThumbInfo {
     pub source: String,
     pub bytes: u64,
     pub cached: bool,
+    pub locked: bool,
 }
 
 #[derive(Serialize)]
@@ -126,7 +127,60 @@ fn cached_info(dir: &Path, name: &str, source: &str) -> ThumbInfo {
         source: source.to_string(),
         bytes,
         cached: true,
+        locked: false,
     }
+}
+
+fn locked_info(bytes: u64) -> ThumbInfo {
+    ThumbInfo {
+        url: String::new(),
+        width: 0,
+        height: 0,
+        source: "pdf-locked".to_string(),
+        bytes,
+        cached: false,
+        locked: true,
+    }
+}
+
+/// Looks for the `/Encrypt` entry that encrypted PDFs carry in their trailer or
+/// cross-reference stream. Only the tail is scanned; rendered pages are tried
+/// first, so this is just a confirmation for files that will not open.
+fn pdf_is_encrypted(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    const TAIL: u64 = 64 * 1024;
+    let mut file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    if file.seek(SeekFrom::Start(len.saturating_sub(TAIL))).is_err() {
+        return false;
+    }
+    let mut buf = Vec::new();
+    if file.take(TAIL).read_to_end(&mut buf).is_err() {
+        return false;
+    }
+
+    let needle = b"/Encrypt";
+    let mut from = 0;
+    while let Some(offset) = buf[from..]
+        .windows(needle.len())
+        .position(|window| window == needle)
+    {
+        let mut i = from + offset + needle.len();
+        let token_end = i;
+        while i < buf.len() && buf[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        // A real trailer entry is either `/Encrypt N G R` or an inline `/Encrypt <<` dict.
+        if i > token_end && (buf.get(i).is_some_and(u8::is_ascii_digit) || buf.get(i) == Some(&b'<'))
+        {
+            return true;
+        }
+        from = token_end;
+    }
+    false
 }
 
 pub fn generate(
@@ -154,9 +208,10 @@ pub fn generate(
     }
 
     let size = requested_size.clamp(64, 2048);
+    let revision = if ext == "3mf" { "thumb-v6-3mf3" } else { "thumb-v6" };
     let key = blake3::hash(
         format!(
-            "thumb-v5|{}|{}|{}|{}",
+            "{revision}|{}|{}|{}|{}",
             paths::text(&p),
             meta.len(),
             mtime_ms(&meta),
@@ -192,6 +247,21 @@ pub fn generate(
     } else if kind == "model" {
         source = "mesh";
         mesh::render_image(&p, &ext, size).map(DynamicImage::ImageRgb8)
+    } else if ext == "pdf" {
+        #[cfg(windows)]
+        {
+            source = "pdf";
+            pdf_win::first_page(&p, size)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            source = "poppler";
+            linux_media::pdf_first_page(&p, size, thumb_dir)
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            None
+        }
     } else {
         #[cfg(windows)]
         {
@@ -222,6 +292,9 @@ pub fn generate(
     };
 
     let Some(img) = image_data else {
+        if ext == "pdf" && pdf_is_encrypted(&p) {
+            return Ok(Some(locked_info(meta.len())));
+        }
         return Ok(None);
     };
     let rgb = flatten(&img, size);
@@ -237,6 +310,7 @@ pub fn generate(
         source: source.to_string(),
         bytes: bytes.len() as u64,
         cached: false,
+        locked: false,
     }))
 }
 
@@ -463,6 +537,66 @@ mod shell {
             }
             out.map(DynamicImage::ImageRgba8)
         }
+    }
+}
+
+#[cfg(windows)]
+mod pdf_win {
+    use image::DynamicImage;
+    use std::path::{Path, PathBuf};
+
+    pub fn first_page(path: &Path, size: u32) -> Option<DynamicImage> {
+        let path: PathBuf = path.to_path_buf();
+        // WinRT needs a COM apartment; a dedicated thread keeps its MTA state
+        // away from the shell thumbnail calls, which use their own STA.
+        std::thread::spawn(move || first_page_inner(&path, size))
+            .join()
+            .ok()
+            .flatten()
+    }
+
+    fn first_page_inner(path: &Path, size: u32) -> Option<DynamicImage> {
+        use windows::core::HSTRING;
+        use windows::Data::Pdf::{PdfDocument, PdfPageRenderOptions};
+        use windows::Storage::Streams::{DataReader, InMemoryRandomAccessStream};
+        use windows::Storage::StorageFile;
+        use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
+
+        unsafe { RoInitialize(RO_INIT_MULTITHREADED).ok()? };
+        let hpath = HSTRING::from(path.to_string_lossy().as_ref());
+        let file = StorageFile::GetFileFromPathAsync(&hpath).ok()?.join().ok()?;
+        let doc = PdfDocument::LoadFromFileAsync(&file).ok()?.join().ok()?;
+        if doc.IsPasswordProtected().ok()? || doc.PageCount().ok()? == 0 {
+            return None;
+        }
+
+        let page = doc.GetPage(0).ok()?;
+        let bounds = page.Size().ok()?;
+        let width = bounds.Width.max(1.0);
+        let height = bounds.Height.max(1.0);
+        let target_w = size.clamp(32, 2048);
+        let target_h = ((target_w as f32 * height / width).round() as u32).clamp(1, 4096);
+        let options = PdfPageRenderOptions::new().ok()?;
+        options.SetDestinationWidth(target_w).ok()?;
+        options.SetDestinationHeight(target_h).ok()?;
+
+        let stream = InMemoryRandomAccessStream::new().ok()?;
+        page.RenderWithOptionsToStreamAsync(&stream, &options)
+            .ok()?
+            .join()
+            .ok()?;
+        let len = stream.Size().ok()?;
+        if len == 0 || len > 64 * 1024 * 1024 {
+            return None;
+        }
+        stream.Seek(0).ok()?;
+        let reader = DataReader::CreateDataReader(&stream).ok()?;
+        reader.LoadAsync(len as u32).ok()?.join().ok()?;
+        let mut bytes = vec![0u8; len as usize];
+        reader.ReadBytes(&mut bytes).ok()?;
+        let _ = reader.Close();
+        let _ = page.Close();
+        image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).ok()
     }
 }
 

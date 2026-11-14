@@ -67,6 +67,7 @@ export const api = {
   loadSettings: () => invoke('load_settings'),
   saveSettings: (settings) => invoke('save_settings', { settings }),
   takeLaunchPath: () => invoke('take_launch_path'),
+  openWindowMenu: () => invoke('open_window_menu'),
   installExplorerMenu: () => invoke('install_explorer_menu'),
 };
 

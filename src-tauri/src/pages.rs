@@ -1,9 +1,11 @@
+use crate::md;
 use crate::media::percent_decode;
 use crate::paths;
 use std::borrow::Cow;
 use tauri::http::{header, Request, Response, StatusCode};
 
 const MAX_PAGE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_MARKDOWN_BYTES: usize = 512 * 1024;
 
 fn mime_for(ext: &str) -> Option<&'static str> {
     match ext {
@@ -60,7 +62,9 @@ pub fn serve<R: tauri::Runtime>(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let content_type = match mime_for(&paths::ext_of(&name)) {
+    let ext = paths::ext_of(&name);
+    let markdown = ext == "md" || ext == "markdown";
+    let content_type = match mime_for(&ext) {
         Some(value) => value,
         None => return empty(StatusCode::NOT_FOUND),
     };
@@ -69,6 +73,31 @@ pub fn serve<R: tauri::Runtime>(
         Ok(meta) if meta.is_file() && meta.len() <= MAX_PAGE_BYTES => meta,
         _ => return empty(StatusCode::NOT_FOUND),
     };
+
+    if markdown {
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(_) => return empty(StatusCode::INTERNAL_SERVER_ERROR),
+        };
+        let cut = bytes.len().min(MAX_MARKDOWN_BYTES);
+        let text = String::from_utf8_lossy(&bytes[..cut]);
+        let html = md::page(&text);
+        let length = html.len();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .header(header::CONTENT_LENGTH, length.to_string())
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .header("x-content-type-options", "nosniff")
+            .header(
+                "content-security-policy",
+                "script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'",
+            )
+            .body(Cow::Owned(html.into_bytes()))
+            .expect("markdown response");
+    }
+
     let body = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(_) => return empty(StatusCode::INTERNAL_SERVER_ERROR),

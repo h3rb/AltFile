@@ -44,17 +44,83 @@ function shareHost(path) {
   return String(path || '').replace(/^\\+/, '').split(/[\\/]/)[0] || '';
 }
 
+let expandedPlaylistId = null;
+
+function playlistTracks(playlist) {
+  if (!playlist.items.length) {
+    return '<div class="playlist-tracks"><div class="nav-empty">This playlist is empty.</div></div>';
+  }
+  const playing =
+    playlist.id === state.selectedPlaylistId ? state.media.queue[state.media.index]?.path : null;
+  return `<div class="playlist-tracks">${playlist.items
+    .map((item, index) => {
+      const active = playing === item.path;
+      return `
+        <button class="playlist-track${active ? ' active' : ''}" type="button" data-track-playlist-id="${esc(playlist.id)}" data-track-index="${index}" title="${esc(item.path)}">
+          ${icon(item.kind === 'video' ? 'video' : 'music', 13)}
+          <span class="nav-name">${esc(item.name)}</span>
+        </button>`;
+    })
+    .join('')}</div>`;
+}
+
 function playlistItem(playlist) {
   const active = playlist.id === state.selectedPlaylistId;
+  const expanded = playlist.id === expandedPlaylistId;
   const count = playlist.items.length;
   return `
     <div class="drive-wrap">
-      <button class="nav-item${active ? ' active' : ''}" type="button" data-playlist-id="${esc(playlist.id)}" title="${esc(playlist.name)} — ${count} item${count === 1 ? '' : 's'}">
+      <button class="nav-item${active ? ' active' : ''}" type="button" data-playlist-id="${esc(playlist.id)}" aria-expanded="${expanded}" title="${esc(playlist.name)} — ${count} item${count === 1 ? '' : 's'}">
         ${icon('playlist', 15)}
         <span class="nav-name">${esc(playlist.name)}</span>
         <span class="nav-meta">${count}</span>
       </button>
+      ${expanded ? playlistTracks(playlist) : ''}
     </div>`;
+}
+
+let dropTarget = null;
+
+function playlistDropTarget(x, y) {
+  const el = document.elementFromPoint(x, y);
+  return el?.closest('#playlist-list .nav-item[data-playlist-id]') || null;
+}
+
+function highlightPlaylist(item) {
+  if (item === dropTarget) return;
+  dropTarget?.classList.remove('drop-target');
+  dropTarget = item;
+  dropTarget?.classList.add('drop-target');
+}
+
+function initPlaylistDrop() {
+  const webview = globalThis.__TAURI__?.webview?.getCurrentWebview?.();
+  if (!webview?.onDragDropEvent) return;
+  const toCss = (position) => ({
+    x: (position?.x || 0) / (window.devicePixelRatio || 1),
+    y: (position?.y || 0) / (window.devicePixelRatio || 1),
+  });
+  webview
+    .onDragDropEvent((event) => {
+      const payload = event?.payload || {};
+      if (payload.type === 'leave' || payload.type === 'enter') {
+        highlightPlaylist(null);
+        return;
+      }
+      if (payload.type === 'over') {
+        const point = toCss(payload.position);
+        highlightPlaylist(playlistDropTarget(point.x, point.y));
+        return;
+      }
+      if (payload.type !== 'drop') return;
+      const point = toCss(payload.position);
+      const item = playlistDropTarget(point.x, point.y);
+      highlightPlaylist(null);
+      const id = item?.dataset.playlistId;
+      const paths = Array.isArray(payload.paths) ? payload.paths : [];
+      if (id && paths.length) app.addPathsToPlaylist?.(id, paths);
+    })
+    .catch(() => {});
 }
 
 export function renderSidebar() {
@@ -67,6 +133,7 @@ export function renderSidebar() {
   const rescanBtn = document.getElementById('rescan-network');
   const settingsBtn = document.getElementById('settings-btn');
   const addBtn = document.getElementById('add-bookmark');
+  const addPlaylistBtn = document.getElementById('add-playlist');
   if (!quick || !bookmarkList || !driveList) return;
 
   const current = activePath();
@@ -76,9 +143,9 @@ export function renderSidebar() {
 
   if (settingsBtn) settingsBtn.innerHTML = `${icon('settings', 15)}<span>Settings</span>${updatePillHtml()}`;
   if (addBtn) addBtn.innerHTML = icon('plus', 13);
+  if (addPlaylistBtn) addPlaylistBtn.innerHTML = icon('plus', 13);
 
   quick.innerHTML = `
-    <div class="nav-heading"><span>Quick access</span></div>
     <div class="nav-list">
       ${quickPlaces
         .map((place) =>
@@ -109,6 +176,10 @@ export function renderSidebar() {
 
   if (playlistNav && playlistList) {
     playlistNav.toggleAttribute('hidden', !state.showPlaylists);
+    dropTarget = null;
+    if (expandedPlaylistId && !state.playlists.some((playlist) => playlist.id === expandedPlaylistId)) {
+      expandedPlaylistId = null;
+    }
     if (state.showPlaylists) {
       playlistList.innerHTML = state.playlists.length
         ? state.playlists.map((playlist) => playlistItem(playlist)).join('')
@@ -200,6 +271,11 @@ function onListClick(event) {
     removeBookmark(remove.dataset.bookmark);
     return;
   }
+  const track = event.target.closest('.playlist-track');
+  if (track) {
+    app.playPlaylistTrack?.(track.dataset.trackPlaylistId, Number(track.dataset.trackIndex));
+    return;
+  }
   const playlist = event.target.closest('.nav-item[data-playlist-id]');
   if (playlist) {
     app.openPlaylist?.(playlist.dataset.playlistId);
@@ -212,6 +288,15 @@ function onListClick(event) {
 
 function onListContextMenu(event) {
   if (event.target.closest('.nav-remove')) return;
+  const playlist = event.target.closest('.nav-item[data-playlist-id]');
+  if (playlist) {
+    event.preventDefault();
+    event.stopPropagation();
+    const id = playlist.dataset.playlistId;
+    expandedPlaylistId = expandedPlaylistId === id ? null : id;
+    renderSidebar();
+    return;
+  }
   const item = event.target.closest('.nav-item[data-path]');
   if (!item) return;
   event.preventDefault();
@@ -234,6 +319,8 @@ export function initSidebar() {
 
   document.getElementById('settings-btn')?.addEventListener('click', () => app.openSettings?.());
   document.getElementById('add-bookmark')?.addEventListener('click', () => app.bookmarkCurrent?.());
+  document.getElementById('add-playlist')?.addEventListener('click', () => app.newPlaylist?.());
   document.getElementById('rescan-network')?.addEventListener('click', () => app.rescanNetwork?.());
   document.getElementById('palette-hint')?.addEventListener('click', () => app.openPalette?.());
+  initPlaylistDrop();
 }

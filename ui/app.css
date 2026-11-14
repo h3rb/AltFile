@@ -307,6 +307,12 @@ mark {
   color: rgba(var(--accent-rgb), 0.7);
 }
 
+.nav-item.drop-target {
+  background: rgba(var(--accent-rgb), 0.16);
+  border-color: rgba(var(--accent-rgb), 0.5);
+  color: var(--text);
+}
+
 .drive-wrap {
   flex: 1;
   min-width: 0;
@@ -364,6 +370,45 @@ mark {
   font-size: 11px;
   color: var(--dim);
   line-height: 1.5;
+}
+
+.playlist-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 1px 0 3px 17px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-soft);
+}
+
+.playlist-track {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  width: 100%;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  text-align: left;
+  font-size: 11.5px;
+}
+
+.playlist-track:hover {
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text);
+}
+
+.playlist-track .ico {
+  flex: none;
+  color: var(--dim);
+}
+
+.playlist-track.active,
+.playlist-track.active .ico {
+  color: var(--accent);
 }
 
 .sidebar-foot {
@@ -888,6 +933,34 @@ mark {
   outline: none;
 }
 
+body.panning,
+body.panning * {
+  cursor: all-scroll !important;
+  user-select: none;
+}
+
+.pan-anchor {
+  position: fixed;
+  z-index: 3000;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  pointer-events: none;
+  color: var(--accent);
+  background: rgba(7, 10, 14, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+}
+
+.pan-anchor .ico {
+  display: block;
+}
+
 .files-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--card-size, 176px), 1fr));
@@ -1160,6 +1233,7 @@ mark {
 
 .archive-head {
   position: relative;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1394,7 +1468,7 @@ mark {
   position: absolute;
   left: 7px;
   bottom: 7px;
-  z-index: 2;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1412,6 +1486,36 @@ mark {
 
 .thumb-badge .ico {
   color: var(--accent);
+}
+
+.lock-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px;
+  text-align: center;
+  pointer-events: none;
+  color: var(--muted);
+  background: linear-gradient(180deg, rgba(9, 13, 19, 0.5), rgba(9, 13, 19, 0.72));
+}
+
+.lock-overlay .ico {
+  color: var(--accent);
+  opacity: 0.92;
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.4));
+}
+
+.lock-overlay span {
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .shortcut-mark {
@@ -1653,6 +1757,10 @@ mark {
 
 .detail-pair .ico {
   color: var(--dim);
+}
+
+.detail-locked .ico {
+  color: var(--accent);
 }
 
 .detail-none {
@@ -2013,6 +2121,37 @@ mark {
   color: #9fb2c8;
 }
 
+.archive-locked {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 0;
+  padding: 16px 8px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.archive-locked .ico {
+  color: var(--accent);
+  opacity: 0.92;
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.4));
+}
+
+.archive-locked strong {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.archive-locked span {
+  font-size: 10.5px;
+  color: var(--dim);
+}
+
 .preview-title {
   margin-top: 12px;
   font-size: 13px;
@@ -2055,6 +2194,27 @@ mark {
 .meta-value.mono {
   font-family: var(--font-mono);
   font-size: 10.5px;
+}
+
+.meta-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+}
+
+.meta-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.meta-swatch i {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
 .preview-actions {

@@ -1,6 +1,6 @@
 [package]
 name = "altfileexplorer"
-version = "0.2.6"
+version = "0.2.7"
 description = "A fast, dark, keyboard-first file explorer with smart thumbnails and a folder treemap"
 authors = ["h3rb"]
 license = "MIT"
@@ -40,11 +40,14 @@ sevenz-rust2 = { version = "0.25", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
+    "Data_Pdf",
+    "Storage_Streams",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_NetworkManagement_WNet",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    "Win32_System_WinRT",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",

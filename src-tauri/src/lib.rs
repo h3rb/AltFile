@@ -1,6 +1,7 @@
 mod archive;
 mod fonts;
 mod fsops;
+mod md;
 mod media;
 mod mesh;
 mod network;
@@ -10,6 +11,7 @@ mod render;
 mod search;
 mod settings;
 mod shellmenu;
+mod threemf;
 mod thumbs;
 mod viz;
 
@@ -119,6 +121,49 @@ fn forward_launch_path(app: &tauri::AppHandle, path: String) {
     }
     let _ = app.emit("open-path", path);
     focus_main_window(app);
+}
+
+#[tauri::command]
+fn open_window_menu(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetSystemMenu, GetWindowRect, PostMessageW, SetForegroundWindow, TrackPopupMenu,
+            TPM_LEFTALIGN, TPM_TOPALIGN, WM_NULL,
+        };
+        let hwnd = window.hwnd().map_err(|error| error.to_string())?.0 as isize;
+        app.run_on_main_thread(move || {
+            let hwnd = HWND(hwnd as *mut _);
+            unsafe {
+                let menu = GetSystemMenu(hwnd, false);
+                if menu.is_invalid() {
+                    return;
+                }
+                let mut rect = RECT::default();
+                if GetWindowRect(hwnd, &mut rect).is_err() {
+                    return;
+                }
+                let _ = SetForegroundWindow(hwnd);
+                let _ = TrackPopupMenu(
+                    menu,
+                    TPM_LEFTALIGN | TPM_TOPALIGN,
+                    rect.left + 8,
+                    rect.top + 8,
+                    None,
+                    hwnd,
+                    None,
+                );
+                let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
+            }
+        })
+        .map_err(|error| error.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, window);
+        Err("The window menu is only available on Windows".into())
+    }
 }
 
 #[tauri::command]
@@ -306,6 +351,7 @@ pub fn run() {
             settings::load_settings,
             settings::save_settings,
             take_launch_path,
+            open_window_menu,
             install_explorer_menu
         ])
         .run(tauri::generate_context!())

@@ -100,8 +100,8 @@ export async function removeEntries(entries) {
   }
 }
 
-export function copySelection(cut = false) {
-  const list = targetEntries();
+export function copySelection(cut = false, entries = null) {
+  const list = targetEntries(entries);
   if (!list.length) {
     toast('Nothing selected', { type: 'info' });
     return;

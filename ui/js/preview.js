@@ -46,6 +46,52 @@ function setMetaField(root, field, value) {
   row.hidden = false;
 }
 
+function plural(count, word) {
+  return `${humanCount(count)} ${count === 1 ? word : `${word}s`}`;
+}
+
+function fillSceneInfo(root, scene) {
+  setMetaField(root, 'modelTitle', scene.title);
+  setMetaField(root, 'designer', scene.designer);
+  setMetaField(root, 'application', scene.application);
+
+  const objects = [plural(scene.objects, 'object')];
+  if (scene.parts > scene.objects) objects.push(plural(scene.parts, 'part'));
+  if (scene.plates > 1) objects.push(`plate 1 of ${scene.plates}`);
+  setMetaField(root, 'objects', objects.join(' · '));
+
+  const triangles = [humanCount(scene.triangles)];
+  if (scene.painted) triangles.push(`${humanCount(scene.painted)} painted`);
+  if (scene.sampled) triangles.push('simplified preview');
+  setMetaField(root, 'triangles', triangles.join(' · '));
+
+  if (Array.isArray(scene.extent)) {
+    const metres = Math.max(...scene.extent) >= 1000;
+    const parts = scene.extent.map((mm) => (metres ? (mm / 1000).toFixed(2) : mm >= 100 ? `${Math.round(mm)}` : mm.toFixed(1)));
+    setMetaField(root, 'extent', `${parts.join(' × ')} ${metres ? 'm' : 'mm'}`);
+  }
+
+  const row = root.querySelector('[data-meta-field="materials"]');
+  const materials = Array.isArray(scene.materials) ? scene.materials : [];
+  if (!row || !materials.length) return;
+  const value = row.querySelector('.meta-value');
+  value.textContent = '';
+  value.classList.add('meta-swatches');
+  for (const material of materials) {
+    const chip = document.createElement('span');
+    chip.className = 'meta-swatch';
+    const percent = material.share >= 0.995 ? '100%' : `${(material.share * 100).toFixed(material.share < 0.1 ? 1 : 0)}%`;
+    chip.title = `${material.name} · ${material.color} · ${percent} of surface`;
+    const dot = document.createElement('i');
+    dot.style.background = material.color;
+    const label = document.createElement('span');
+    label.textContent = `${material.name} ${percent}`;
+    chip.append(dot, label);
+    value.append(chip);
+  }
+  row.hidden = false;
+}
+
 function kindTile(entry, size = 46) {
   const color = kindColor(entry.kind);
   return `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${themeColor(0.06)};min-height:150px">${kindIcon(entry.kind, size)}</div>`;
@@ -109,6 +155,22 @@ function videoMediaHtml(entry, info, thumb) {
 }
 
 function archivePreviewHtml(summary) {
+  const head = `
+      <div class="archive-prev-head">
+        <span class="archive-prev-format">${icon('archive', 13)}${esc(summary.format)}</span>
+        <span class="archive-prev-kind">${esc(summary.kind)}</span>
+      </div>`;
+  if (summary.locked) {
+    return `
+    <div class="preview-media archive-preview">
+      ${head}
+      <div class="archive-locked">
+        ${icon('lock', 26)}
+        <strong>Password protected</strong>
+        <span>Contents cannot be listed without the password.</span>
+      </div>
+    </div>`;
+  }
   const rows = summary.top
     .map((name) => {
       const dir = name.endsWith('/');
@@ -122,10 +184,7 @@ function archivePreviewHtml(summary) {
   if (summary.bytes > 0) parts.push(humanSize(summary.bytes));
   return `
     <div class="preview-media archive-preview">
-      <div class="archive-prev-head">
-        <span class="archive-prev-format">${icon('archive', 13)}${esc(summary.format)}</span>
-        <span class="archive-prev-kind">${esc(summary.kind)}</span>
-      </div>
+      ${head}
       <ul class="archive-prev-list">
         ${rows || '<li class="is-empty"><span>No entries</span></li>'}
         ${summary.truncated ? '<li class="is-empty"><span>Partial scan of a large archive</span></li>' : ''}
@@ -190,17 +249,26 @@ function subjectHtml(entry, info, thumb, text, archive) {
       : 'Folder'
     : humanSize(info.size);
   const media = !info.isDir && MEDIA_KINDS.has(info.kind);
+  const scene = !info.isDir && (info.ext || '').toLowerCase() === '3mf';
 
   const meta = [
     metaRow('Type', `${kindLabel(info.kind)}${info.ext ? ` (.${info.ext})` : ''}`),
+    scene ? metaRowField('Title', 'modelTitle') : '',
+    scene ? metaRowField('Designer', 'designer') : '',
+    scene ? metaRowField('Slicer', 'application') : '',
+    scene ? metaRowField('Objects', 'objects') : '',
+    scene ? metaRowField('Triangles', 'triangles') : '',
+    scene ? metaRowField('Extent', 'extent') : '',
+    scene ? metaRowField('Materials', 'materials') : '',
     media ? metaRowField('Duration', 'duration') : '',
     media && info.kind === 'video' ? metaRowField('Resolution', 'resolution') : '',
     media && info.kind === 'audio' ? metaRowField('Bitrate', 'bitrate', true) : '',
     media && info.kind === 'audio' ? metaRowField('Sample rate', 'sampleRate') : '',
     media && info.kind === 'audio' ? metaRowField('Channels', 'channels') : '',
     metaRow('Size', sizeLabel),
-    archive ? metaRow('Contents', `${humanCount(archive.files)} ${archive.files === 1 ? 'file' : 'files'} · ${humanCount(archive.folders)} ${archive.folders === 1 ? 'folder' : 'folders'}`) : '',
+    archive && !archive.locked ? metaRow('Contents', `${humanCount(archive.files)} ${archive.files === 1 ? 'file' : 'files'} · ${humanCount(archive.folders)} ${archive.folders === 1 ? 'folder' : 'folders'}`) : '',
     archive ? metaRow('Content type', archive.kind) : '',
+    archive && archive.locked ? metaRow('Protection', 'Password required') : '',
     metaRow('Modified', fmtFullDate(info.modified)),
     metaRow('Created', info.created ? fmtFullDate(info.created) : ''),
     metaRow('Dimensions', info.dimensions ? `${info.dimensions[0]} × ${info.dimensions[1]} px` : ''),
@@ -563,7 +631,9 @@ export function renderPreview() {
         };
       }
       if (!info.isDir && isRotatableModel(info)) {
-        wireModelPreview(entry, body, token);
+        wireModelPreview(entry, body, token).then((scene) => {
+          if (scene && token === state.preview.token) fillSceneInfo(body, scene);
+        });
       } else if (!info.isDir && info.kind === 'audio') {
         wireAudioPreview(entry, info, body, token);
       } else if (!info.isDir && info.kind === 'video') {

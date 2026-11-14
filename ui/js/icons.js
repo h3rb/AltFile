@@ -67,6 +67,8 @@ const ICONS = {
   arrowUpRight: '<path d="M7 17 17 7M9 7h8v8"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/><circle cx="12" cy="15.5" r="1.2" fill="currentColor" stroke="none"/>',
+  autoscroll: '<circle cx="12" cy="12" r="8.4"/><path d="m12 5.2 1.7 1.7M12 5.2 10.3 6.9M12 18.8l1.7-1.7M12 18.8l-1.7-1.7M5.2 12l1.7 1.7M5.2 12l1.7-1.7M18.8 12l-1.7 1.7M18.8 12l-1.7-1.7"/>',
 };
 
 const KIND_ICON = {
