@@ -84,6 +84,13 @@ const MAX_ARCHIVE_REQUESTS = 2;
 let archiveActive = 0;
 let archiveObserver = null;
 
+const isoCache = new Map();
+const isoQueue = [];
+const MAX_ISO_CACHE = 500;
+const MAX_ISO_REQUESTS = 2;
+let isoActive = 0;
+let isoObserver = null;
+
 let waveObserver = null;
 let waveResizeBound = false;
 
@@ -375,7 +382,7 @@ function cardHtml(entry, index) {
   const hoverVideo = !entry.isDir && entry.kind === 'video';
   const thumbBody = entry.isDir
     ? folderTileHtml(entry)
-    : `${archiveTileHtml(entry) || fontTileHtml(entry) || pageTileHtml(entry) || `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>`}
+    : `${isoTileHtml(entry) || archiveTileHtml(entry) || fontTileHtml(entry) || pageTileHtml(entry) || `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>`}
         ${thumb ? '<img alt="" decoding="async" draggable="false">' : ''}`;
   return `
     <article class="${classes.join(' ')}" data-path="${esc(entry.path)}" data-index="${index}" title="${esc(entry.path)}">
@@ -613,6 +620,7 @@ export function renderFiles() {
   observeThumbs();
   observeCounts();
   observeArchives();
+  observeIso();
   observeFontTiles();
   observePageTiles();
   observeSizes();
@@ -1018,6 +1026,111 @@ export function archiveSummaryFor(entry) {
     }
   }
   return pending;
+}
+
+function isoSupported(entry) {
+  return Boolean(entry && !entry.isDir && (entry.ext || '').toLowerCase() === 'iso');
+}
+
+function isoKey(path, mtime) {
+  return `${path}|${mtime}`;
+}
+
+function isoInfoFor(path, mtime) {
+  const key = isoKey(path, mtime);
+  let pending = isoCache.get(key);
+  if (!pending) {
+    pending = api.isoInfo(path).catch(() => null);
+    isoCache.set(key, pending);
+    if (isoCache.size > MAX_ISO_CACHE) {
+      const oldest = isoCache.keys().next().value;
+      if (oldest !== undefined) isoCache.delete(oldest);
+    }
+  }
+  return pending;
+}
+
+function isoTileHtml(entry) {
+  if (!isoSupported(entry)) return '';
+  const color = kindColor('archive');
+  return `
+        <div class="iso-tile" data-iso-path="${esc(entry.path)}" data-iso-mtime="${entry.modified || 0}" style="--kind-color:${color};--kind-glow:${rgba(color, 0.14)}">
+          <div class="iso-head">${icon('disc', 11)}<span>ISO</span></div>
+          <div class="iso-disc">${icon('disc', 34)}</div>
+          <div class="iso-label" hidden></div>
+        </div>`;
+}
+
+function applyIso(el, info) {
+  if (!el) return;
+  const disc = el.querySelector('.iso-disc');
+  const label = el.querySelector('.iso-label');
+  if (info && info.iconUrl && disc) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.decoding = 'async';
+    img.draggable = false;
+    img.addEventListener('load', () => disc.replaceChildren(img), { once: true });
+    img.src = info.iconUrl;
+  }
+  const text = info && info.label ? String(info.label).trim() : '';
+  if (text && label) {
+    label.textContent = text;
+    label.title = text;
+    label.hidden = false;
+  }
+  if (text || (info && info.iconFrom)) {
+    el.title = [text, info && info.iconFrom ? `Icon: ${info.iconFrom}` : ''].filter(Boolean).join(' · ');
+  }
+}
+
+function pumpIso() {
+  while (isoActive < MAX_ISO_REQUESTS && isoQueue.length) {
+    const job = isoQueue.shift();
+    if (!job.el.isConnected) continue;
+    isoActive += 1;
+    isoInfoFor(job.path, job.mtime)
+      .then((info) => {
+        if (job.el.isConnected) applyIso(job.el, info);
+      })
+      .finally(() => {
+        isoActive -= 1;
+        pumpIso();
+      });
+  }
+}
+
+function loadIso(el) {
+  if (!el || el.dataset.isoLoaded === '1') return;
+  el.dataset.isoLoaded = '1';
+  const path = el.dataset.isoPath;
+  if (!path) return;
+  isoQueue.push({ path, mtime: Number(el.dataset.isoMtime) || 0, el });
+  pumpIso();
+}
+
+function observeIso() {
+  if (isoObserver) isoObserver.disconnect();
+  const scroll = scrollEl();
+  if (!scroll) return;
+  const targets = scroll.querySelectorAll('.iso-tile[data-iso-path]');
+  if (!targets.length) return;
+
+  if (!('IntersectionObserver' in window)) {
+    targets.forEach(loadIso);
+    return;
+  }
+  isoObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        isoObserver.unobserve(entry.target);
+        loadIso(entry.target);
+      }
+    },
+    { root: scroll, rootMargin: '240px 0px' }
+  );
+  targets.forEach((target) => isoObserver.observe(target));
 }
 
 function archiveRowHtml(name) {

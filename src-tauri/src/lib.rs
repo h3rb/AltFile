@@ -1,6 +1,7 @@
 mod archive;
 mod fonts;
 mod fsops;
+mod iso;
 mod md;
 mod media;
 mod mesh;
@@ -222,7 +223,7 @@ fn valid_cache_name(name: &str) -> bool {
     let Some((stem, ext)) = name.rsplit_once('.') else {
         return false;
     };
-    ext == "jpg" && stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit())
+    matches!(ext, "jpg" | "png") && stem.len() == 64 && stem.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn serve_thumbnail<R: tauri::Runtime>(
@@ -245,7 +246,10 @@ fn serve_thumbnail<R: tauri::Runtime>(
     match std::fs::read(&file) {
         Ok(bytes) => Response::builder()
             .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "image/jpeg")
+            .header(
+                header::CONTENT_TYPE,
+                if name.ends_with(".png") { "image/png" } else { "image/jpeg" },
+            )
             .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .body(Cow::Owned(bytes))
@@ -328,6 +332,7 @@ pub fn run() {
             fsops::folder_counts,
             fsops::folder_size,
             archive::archive_summary,
+            iso::iso_info,
             fsops::list_places,
             network::network_places,
             network::network_computers,

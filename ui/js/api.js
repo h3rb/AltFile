@@ -51,6 +51,7 @@ export const api = {
   meshBounds: (path) => invoke('mesh_bounds', { path }),
   meshGeometry: (path) => invoke('mesh_geometry', { path }),
   archiveSummary: (path) => invoke('archive_summary', { path }),
+  isoInfo: (path) => invoke('iso_info', { path }),
   textPreview: (path, maxBytes) => invoke('text_preview', { path, maxBytes }),
   copyPaths: (sources, destDir, cut) => invoke('copy_paths', { sources, destDir, cut }),
   deletePaths: (items) => invoke('delete_paths', { items }),

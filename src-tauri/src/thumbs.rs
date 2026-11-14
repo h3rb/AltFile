@@ -31,12 +31,28 @@ pub struct CacheStats {
     pub max_bytes: u64,
 }
 
-fn url_for(name: &str) -> String {
+pub(crate) fn url_for(name: &str) -> String {
     if cfg!(windows) {
         format!("http://thumb.localhost/{name}")
     } else {
         format!("thumb://localhost/{name}")
     }
+}
+
+pub(crate) fn store_image(
+    dir: &Path,
+    name: &str,
+    img: &DynamicImage,
+    size: u32,
+) -> Result<(), String> {
+    let resized = img.thumbnail(size, size);
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    resized
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    write_cache(dir, &dir.join(name), bytes.get_ref())?;
+    let _ = prune(dir, CACHE_LIMIT);
+    Ok(())
 }
 
 fn mtime_ms(meta: &fs::Metadata) -> u64 {

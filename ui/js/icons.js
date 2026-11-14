@@ -39,6 +39,7 @@ const ICONS = {
   file: '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/>',
   code: '<path d="m8 8-4 4 4 4M16 8l4 4-4 4"/>',
   archive: '<rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/>',
+  disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.6"/><path d="M12 3a9 9 0 0 1 9 9"/>',
   terminal: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/>',
   font: '<path d="M5 19 12 5l7 14M8 14h8"/>',
   cube: '<path d="m12 2.8 8 4.4v9.6l-8 4.4-8-4.4V7.2z"/><path d="M12 11.6 4 7.2M12 11.6l8-4.4M12 11.6v9.6"/>',
