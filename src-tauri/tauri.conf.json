@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Alt File Explorer",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "identifier": "dev.h3rb.altfileexplorer",
   "build": {
     "frontendDist": "../ui"
@@ -38,6 +38,11 @@
       "icons/icon.ico"
     ],
     "category": "Utility",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
     "shortDescription": "Fast dark-mode file explorer with smart thumbnails and treemaps",
     "longDescription": "Alt File Explorer is a portable, keyboard-first file browser with smart media thumbnails, fuzzy search, quick previews and a treemap visualization of folder contents."
   }

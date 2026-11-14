@@ -116,14 +116,20 @@ treemap visualization of any folder — and it builds as a portable executable f
   comes to the front and its active tab navigates there, while the second launch hands its request to the first
   instance and exits.
 - **Keyboard-first**: command palette, quick paths, vim-free arrow navigation, and standard shortcuts.
-- **Update check**: on launch (at most once every six hours) the app asks the GitHub releases API for the
-  latest release. When a newer version exists, a version pill appears on the Settings button in the sidebar,
-  and **Settings → About** offers to open the release page. Failed checks stay quiet and can be retried there.
+- **Update check and in-place updates**: on launch (at most once every six hours) the app asks the GitHub
+  releases API for the latest release. When a newer version exists, a version pill appears on the Settings
+  button and **Settings → About → Get update** downloads the build for this platform and installs it:
+  an NSIS-installed copy runs the release's setup silently in update mode and relaunches, while a portable
+  copy replaces its executable in place and restarts. Download progress is shown in the About row; failed
+  checks and downloads stay quiet and can be retried there.
 - **Portable mode**: place `portable.txt` next to the executable and settings, session, and thumbnails are kept
   in a `data` folder beside it. On Windows the WebView2 profile moves there too.
 - **Session restore**: tabs, bookmarks, recent folders, thumbnail size, panel state, the playlist, and saved playlists persist across runs.
 
 ## Portable builds
+
+The packaging scripts also produce the assets the in-app updater expects, so every release should publish
+them next to the archives: `<name>-setup.exe` (NSIS) and the bare executable for each platform.
 
 ### Windows
 
@@ -131,9 +137,16 @@ treemap visualization of any folder — and it builds as a portable executable f
 powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1
 ```
 
-Output: `dist/AltFileExplorer-<version>-win-x64.zip` containing `altfileexplorer.exe`, `portable.txt`,
-`README.md`, and `LICENSE`. Unzip anywhere and run the executable. WebView2 Runtime is required
-(preinstalled on Windows 10/11; the evergreen runtime can be installed from Microsoft).
+Outputs in `dist/`:
+
+- `AltFileExplorer-<version>-win-x64.zip` — portable folder containing `altfileexplorer.exe`, `portable.txt`,
+  `README.md`, and `LICENSE`. Unzip anywhere and run the executable.
+- `AltFileExplorer-<version>-win-x64-setup.exe` — NSIS installer for the current user, built with
+  `cargo tauri bundle --bundles nsis`.
+- `AltFileExplorer-<version>-win-x64.exe` — bare executable that portable copies download when they update.
+
+WebView2 Runtime is required (preinstalled on Windows 10/11; the evergreen runtime can be installed from
+Microsoft).
 
 ### Linux
 
@@ -141,9 +154,10 @@ Output: `dist/AltFileExplorer-<version>-win-x64.zip` containing `altfileexplorer
 bash scripts/package-linux.sh
 ```
 
-Output: `dist/AltFileExplorer-<version>-linux-<arch>.tar.gz`. Extract and run `./altfileexplorer`.
-The binary is dynamically linked against WebKitGTK, so the target system needs the Tauri runtime
-libraries (see below). The `portable.txt` marker keeps user data beside the binary.
+Outputs in `dist/`: `AltFileExplorer-<version>-linux-<arch>.tar.gz` (extract and run `./altfileexplorer`) and
+the bare `AltFileExplorer-<version>-linux-<arch>.bin` binary used by the in-place updater. The binary is
+dynamically linked against WebKitGTK, so the target system needs the Tauri runtime libraries (see below).
+The `portable.txt` marker keeps user data beside the binary.
 
 ### Linux from Windows (WSL)
 

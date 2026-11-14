@@ -38,7 +38,26 @@ Requires the Microsoft Edge WebView2 Runtime (preinstalled on Windows 10/11).
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip -CompressionLevel Optimal
 
+Write-Host "Building NSIS installer..." -ForegroundColor Cyan
+Push-Location $root
+try {
+    & cargo tauri bundle --bundles nsis
+    if ($LASTEXITCODE -ne 0) { throw "cargo tauri bundle failed with exit code $LASTEXITCODE" }
+} finally {
+    Pop-Location
+}
+$setupSource = Get-ChildItem (Join-Path $root "src-tauri\target\release\bundle\nsis") -Filter "*-setup.exe" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $setupSource) { throw "The NSIS installer was not produced" }
+
+$installer = Join-Path $root "dist\AltFileExplorer-$version-win-x64-setup.exe"
+$rawBinary = Join-Path $root "dist\AltFileExplorer-$version-win-x64.exe"
+Copy-Item $setupSource.FullName $installer -Force
+Copy-Item $exe $rawBinary -Force
+
 Write-Host ""
-Write-Host "Portable build ready:" -ForegroundColor Green
-Write-Host "  Folder: $out"
-Write-Host "  Zip:    $zip"
+Write-Host "Builds ready:" -ForegroundColor Green
+Write-Host "  Folder:    $out"
+Write-Host "  Zip:       $zip"
+Write-Host "  Installer: $installer"
+Write-Host "  Binary:    $rawBinary"

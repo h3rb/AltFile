@@ -44,7 +44,11 @@ EOF
 rm -f "$tarball"
 tar -C "$root/dist" -czf "$tarball" "$name"
 
+raw="$root/dist/AltFileExplorer-${version}-linux-${arch}.bin"
+install -m 755 "$bin" "$raw"
+
 echo
-echo "Portable build ready:"
-echo "  Folder: $out"
+echo "Builds ready:"
+echo "  Folder:  $out"
 echo "  Tarball: $tarball"
+echo "  Binary:  $raw"

@@ -7,7 +7,7 @@ import { renderFiles } from './files.js';
 import { setModelSpin } from './model.js';
 import { setLoop } from './player.js';
 import { renderViz } from './viz.js';
-import { checkForUpdates, onUpdate, updateInfo } from './updates.js';
+import { checkForUpdates, installUpdate, onUpdate, updateInfo } from './updates.js';
 
 const SHORTCUTS = [
   ['Ctrl', 'K', 'Command palette'],
@@ -42,12 +42,31 @@ const rerenderViz = debounce(() => {
 
 function updateRowHtml() {
   const update = updateInfo();
-  if (update.checking) {
+  const job = update.install || {};
+  if (job.running) {
+    const percent = job.total > 0 ? Math.min(100, Math.round((job.received / job.total) * 100)) : 0;
+    const label =
+      job.phase === 'installing'
+        ? 'Installing update…'
+        : job.total > 0
+          ? `Downloading ${esc(update.latest)}… ${percent}%`
+          : `Downloading ${esc(update.latest)}…`;
+    const meter =
+      job.phase === 'download' && job.total > 0
+        ? `<div class="update-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><i style="width:${percent}%"></i></div>`
+        : '';
+    return `<span id="settings-update-status">${label}</span>${meter}`;
+  }
+  if (update.checking && !update.available) {
     return `<span id="settings-update-status">Checking for updates…</span><span class="nav-meta">Please wait</span>`;
+  }
+  if (update.available && job.error) {
+    return `<span id="settings-update-status" title="${esc(job.error)}">Update failed</span>
+      <button class="mini-btn" id="settings-update-action" data-action="install" type="button">${icon('download', 12)} Retry</button>`;
   }
   if (update.available) {
     return `<span id="settings-update-status">Version ${esc(update.latest)} is available</span>
-      <button class="mini-btn" id="settings-update-action" data-action="open" type="button">${icon('download', 12)} Get update</button>`;
+      <button class="mini-btn" id="settings-update-action" data-action="install" type="button">${icon('download', 12)} Get update</button>`;
   }
   if (update.error) {
     return `<span id="settings-update-status">Could not check for updates</span>
@@ -255,8 +274,14 @@ export function openSettings() {
   body.querySelector('#settings-update-row')?.addEventListener('click', async (event) => {
     const action = event.target.closest('#settings-update-action');
     if (!action || action.disabled) return;
-    if (action.dataset.action === 'open') {
-      api.openUrl(updateInfo().url).catch((error) => toast(String(error), { type: 'error' }));
+    if (action.dataset.action === 'install') {
+      action.disabled = true;
+      try {
+        await installUpdate();
+        toast('Restarting to install the update…', { type: 'success', icon: 'download' });
+      } catch (error) {
+        toast(String(error?.message || error), { type: 'error' });
+      }
       return;
     }
     action.disabled = true;

@@ -1,13 +1,14 @@
 import { state } from './state.js';
+import { api, listen } from './api.js';
 import { esc } from './util.js';
 
 const API_URL = 'https://api.github.com/repos/h3rb/AltFile/releases/latest';
-const RELEASES_URL = 'https://github.com/h3rb/AltFile/releases/latest';
 const CACHE_KEY = 'altfe.update.latest';
 const CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 const FETCH_TIMEOUT = 8000;
 
-const info = { latest: '', url: RELEASES_URL, checkedAt: 0, error: false, checking: false };
+const info = { latest: '', checkedAt: 0, error: false, checking: false };
+const install = { running: false, phase: '', received: 0, total: 0, error: '' };
 const listeners = new Set();
 
 function parseVersion(value) {
@@ -26,7 +27,11 @@ function isNewer(latest, installed) {
 }
 
 function current() {
-  return { ...info, available: isNewer(info.latest, state.app?.version) };
+  return {
+    ...info,
+    available: isNewer(info.latest, state.app?.version),
+    install: { ...install },
+  };
 }
 
 function notify() {
@@ -43,7 +48,6 @@ function loadCache() {
     const stored = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
     if (!stored || typeof stored.latest !== 'string') return;
     info.latest = stored.latest;
-    info.url = typeof stored.url === 'string' && stored.url ? stored.url : RELEASES_URL;
     info.checkedAt = Number(stored.checkedAt) || 0;
   } catch {}
 }
@@ -52,7 +56,7 @@ function saveCache() {
   try {
     localStorage.setItem(
       CACHE_KEY,
-      JSON.stringify({ latest: info.latest, url: info.url, checkedAt: info.checkedAt })
+      JSON.stringify({ latest: info.latest, checkedAt: info.checkedAt })
     );
   } catch {}
 }
@@ -88,7 +92,6 @@ export async function checkForUpdates({ force = false } = {}) {
     if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
     const release = await response.json();
     info.latest = String(release.tag_name || '');
-    info.url = String(release.html_url || RELEASES_URL);
     info.checkedAt = Date.now();
     info.error = false;
     saveCache();
@@ -106,5 +109,29 @@ export function initUpdates(listener) {
   if (listener) listeners.add(listener);
   loadCache();
   notify();
+  listen('update:progress', (event) => {
+    const payload = event.payload || {};
+    if (!install.running) return;
+    install.phase = String(payload.phase || install.phase);
+    install.received = Number(payload.received) || 0;
+    install.total = Number(payload.total) || 0;
+    notify();
+  }).catch(() => {});
   checkForUpdates().catch(() => {});
+}
+
+export function installUpdate() {
+  if (install.running) return Promise.resolve();
+  install.running = true;
+  install.phase = 'download';
+  install.received = 0;
+  install.total = 0;
+  install.error = '';
+  notify();
+  return api.installUpdate().catch((error) => {
+    install.running = false;
+    install.error = String(error?.message || error);
+    notify();
+    throw error;
+  });
 }

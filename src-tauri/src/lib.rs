@@ -13,6 +13,7 @@ mod settings;
 mod shellmenu;
 mod threemf;
 mod thumbs;
+mod update;
 mod viz;
 
 use serde::Serialize;
@@ -257,6 +258,9 @@ fn serve_thumbnail<R: tauri::Runtime>(
 }
 
 pub fn run() {
+    update::wait_for_previous();
+    update::cleanup();
+
     let launch_path =
         launch_path_from(std::env::args_os().map(|arg| arg.to_string_lossy().into_owned()));
 
@@ -352,7 +356,8 @@ pub fn run() {
             settings::save_settings,
             take_launch_path,
             open_window_menu,
-            install_explorer_menu
+            install_explorer_menu,
+            update::install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running Alt File Explorer");

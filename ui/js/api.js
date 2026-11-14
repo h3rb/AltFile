@@ -69,6 +69,7 @@ export const api = {
   takeLaunchPath: () => invoke('take_launch_path'),
   openWindowMenu: () => invoke('open_window_menu'),
   installExplorerMenu: () => invoke('install_explorer_menu'),
+  installUpdate: () => invoke('install_update'),
 };
 
 export function listen(event, handler) {
