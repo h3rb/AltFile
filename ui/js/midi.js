@@ -113,9 +113,9 @@ export function parseMidi(buffer) {
     }
   }
   if (fourcc(bytes, p) !== 'MThd') throw new Error('Not a MIDI file');
-  const headerLen = dv.getUint32(p + 4, true);
-  const ntrks = dv.getUint16(p + 10, true);
-  const division = dv.getUint16(p + 12, true);
+  const headerLen = dv.getUint32(p + 4, false);
+  const ntrks = dv.getUint16(p + 10, false);
+  const division = dv.getUint16(p + 12, false);
   p += 8 + headerLen;
 
   let ppqn = division & 0x7fff;
@@ -131,7 +131,7 @@ export function parseMidi(buffer) {
   const events = [];
   for (let t = 0; t < ntrks && p + 8 <= bytes.length; t += 1) {
     const id = fourcc(bytes, p);
-    const len = dv.getUint32(p + 4, true);
+    const len = dv.getUint32(p + 4, false);
     p += 8;
     if (id === 'MTrk') {
       events.push(...parseTrack(bytes.subarray(p, p + len)));
