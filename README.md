@@ -94,6 +94,15 @@ treemap visualization of any folder — and it builds as a portable executable f
   sidebar — clicking a track plays that file and highlights it while it is playing; right-click again to
   collapse. Drag audio or video files from the grid or list onto a listed playlist to add them, or drop
   files from another application onto it.
+- **MIDI playback and SoundFonts**: `.mid`, `.midi`, `.rmi` and `.kar` files play out of the box through a
+  built-in generative General MIDI synth — no SoundFont needed. The preview renders the score to a waveform
+  with duration, sample rate and channels, and the player bar treats it like any other audio track. `.sf2`
+  SoundFonts get a piano-keyboard card and a preview listing the font name, preset/instrument/sample counts,
+  engine and version. Right-click a SoundFont and choose **Use for MIDI playback** (or **Use for MIDI** in its
+  preview) to make it the active font, so MIDI files render with its samples; the card gains a `MIDI` badge.
+  **Reset MIDI SoundFont** in the same menu, **Use built-in** in the preview, or the reset button under
+  **Settings → Playback → MIDI SoundFont** returns to the generative synth. The choice is remembered across
+  sessions.
 - **Search** the current folder instantly, or recurse into subfolders with gitignore-aware walking. Which of
   the two the search box does is a setting (**Settings → Browsing → Search subfolders**); the scope button next
   to the box flips the same switch, and the choice is remembered across sessions.

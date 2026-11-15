@@ -2,8 +2,10 @@ import { api, mediaUrl, gifUrl } from './api.js';
 import { state, app } from './state.js';
 import { selectedEntries, focusedEntry, wantsThumb, isGifEntry, archiveSupported, archiveSummaryFor } from './files.js';
 import { icon, kindIcon } from './icons.js';
-import { playEntry, addToPlaylist, onPlayback, seekPlayback, isLooping, setLoop } from './player.js';
+import { playEntry, addToPlaylist, onPlayback, seekPlayback, isLooping, setLoop, setActiveSoundFont, soundfontLabel } from './player.js';
 import { fontTileHtml, observeFontTiles } from './fonts.js';
+import { isSoundfontEntry, soundfontTileHtml, observeSoundfontTiles, soundfontMeta, loadSoundfont } from './sf2.js';
+import { isMidiPath, renderMidi } from './midi.js';
 import { wireModelPreview, stopModelPreview, isRotatableModel } from './model.js';
 import { loadWave, drawWaveform } from './waveform.js';
 import {
@@ -116,6 +118,15 @@ function actionsHtml(entry, info) {
       <button class="mini-btn" type="button" data-action="reveal" data-path="${path}">${icon('external', 13)} Reveal</button>
       <button class="mini-btn" type="button" data-action="copy-path" data-path="${path}">${icon('copy', 13)} Copy path</button>`;
   }
+  if (isSoundfontEntry(entry)) {
+    const active = state.soundFont && state.soundFont.toLowerCase() === entry.path.toLowerCase();
+    return `
+      <button class="mini-btn${active ? ' active' : ' primary'}" type="button" data-action="use-soundfont" data-path="${path}" aria-pressed="${active}">${icon(active ? 'check' : 'piano', 13)} ${active ? 'Using for MIDI' : 'Use for MIDI'}</button>
+      ${state.soundFont ? `<button class="mini-btn" type="button" data-action="reset-soundfont">${icon('refresh', 13)} Use built-in</button>` : ''}
+      <button class="mini-btn" type="button" data-action="open" data-path="${path}">${icon('open', 13)} Open</button>
+      <button class="mini-btn" type="button" data-action="reveal" data-path="${path}">${icon('external', 13)} Reveal</button>
+      <button class="mini-btn" type="button" data-action="copy-path" data-path="${path}">${icon('copy', 13)} Copy path</button>`;
+  }
   return `
     <button class="mini-btn primary" type="button" data-action="open" data-path="${path}">${icon('open', 13)} Open</button>
     <button class="mini-btn" type="button" data-action="reveal" data-path="${path}">${icon('external', 13)} Reveal</button>
@@ -204,10 +215,23 @@ function modelMediaHtml(entry, info, thumb) {
     </div>`;
 }
 
+function soundfontMediaHtml(entry) {
+  const active = state.soundFont && state.soundFont.toLowerCase() === entry.path.toLowerCase();
+  return `
+    <div class="preview-media soundfont-preview">
+      ${soundfontTileHtml(entry, { large: true })}
+      <div class="sf2-prev-note${active ? ' active' : ''}" data-sf2-note>
+        ${icon(active ? 'check' : 'piano', 12)}
+        <span>${active ? 'Active SoundFont for MIDI playback' : 'Activate from the button below to play MIDI files with it'}</span>
+      </div>
+    </div>`;
+}
+
 function mediaHtml(entry, thumb, info, archive) {
   if (archive) return archivePreviewHtml(archive);
   if (info.kind === 'audio') return audioMediaHtml(entry, info);
   if (info.kind === 'video') return videoMediaHtml(entry, info, thumb);
+  if (isSoundfontEntry(entry)) return soundfontMediaHtml(entry);
   const font = fontTileHtml(entry, { large: true });
   if (font) return `<div class="preview-media">${font}</div>`;
   if (isRotatableModel(info)) return modelMediaHtml(entry, info, thumb);
@@ -250,6 +274,7 @@ function subjectHtml(entry, info, thumb, text, archive) {
     : humanSize(info.size);
   const media = !info.isDir && MEDIA_KINDS.has(info.kind);
   const scene = !info.isDir && (info.ext || '').toLowerCase() === '3mf';
+  const soundfont = !info.isDir && isSoundfontEntry(entry);
 
   const meta = [
     metaRow('Type', `${kindLabel(info.kind)}${info.ext ? ` (.${info.ext})` : ''}`),
@@ -265,6 +290,12 @@ function subjectHtml(entry, info, thumb, text, archive) {
     media && info.kind === 'audio' ? metaRowField('Bitrate', 'bitrate', true) : '',
     media && info.kind === 'audio' ? metaRowField('Sample rate', 'sampleRate') : '',
     media && info.kind === 'audio' ? metaRowField('Channels', 'channels') : '',
+    soundfont ? metaRowField('SoundFont', 'sfName') : '',
+    soundfont ? metaRowField('Presets', 'sfPresets') : '',
+    soundfont ? metaRowField('Instruments', 'sfInstruments') : '',
+    soundfont ? metaRowField('Samples', 'sfSamples') : '',
+    soundfont ? metaRowField('Engine', 'sfEngine') : '',
+    soundfont ? metaRowField('Version', 'sfVersion') : '',
     metaRow('Size', sizeLabel),
     archive && !archive.locked ? metaRow('Contents', `${humanCount(archive.files)} ${archive.files === 1 ? 'file' : 'files'} · ${humanCount(archive.folders)} ${archive.folders === 1 ? 'folder' : 'folders'}`) : '',
     archive ? metaRow('Content type', archive.kind) : '',
@@ -381,6 +412,48 @@ async function wireAudioPreview(entry, info, body, token) {
     );
   });
 
+  if (isMidiPath(entry.path)) {
+    const formatEl = body.querySelector('.audio-format');
+    if (statusEl) {
+      statusEl.hidden = false;
+      statusEl.innerHTML = `${icon('loader', 13, 'spin')} Rendering MIDI…`;
+    }
+    try {
+      let sf2 = null;
+      let sf2Key = 'gen';
+      if (state.soundFont) {
+        try {
+          sf2 = await loadSoundfont(state.soundFont);
+          sf2Key = state.soundFont;
+        } catch {
+          sf2 = null;
+          sf2Key = 'gen';
+        }
+      }
+      const result = await renderMidi(entry.path, sf2, sf2Key);
+      if (token !== state.preview.token || !canvas.isConnected) return;
+      seekDuration = result.duration || 0;
+      drawWaveform(canvas, result.peaks);
+      if (typeof ResizeObserver === 'function') {
+        const observer = new ResizeObserver(() => drawWaveform(canvas, result.peaks));
+        observer.observe(canvas);
+      }
+      if (lengthEl) lengthEl.textContent = fmtDuration(result.duration);
+      setMetaField(body, 'duration', fmtDuration(result.duration));
+      setMetaField(body, 'sampleRate', `${(result.sampleRate / 1000).toFixed(1)} kHz`);
+      setMetaField(body, 'channels', result.channels === 1 ? 'Mono' : 'Stereo');
+      if (formatEl) formatEl.textContent = `MIDI · ${soundfontLabel()}`;
+      if (statusEl) statusEl.hidden = true;
+    } catch {
+      if (token !== state.preview.token || !canvas.isConnected) return;
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.textContent = 'MIDI preview unavailable — press Play';
+      }
+    }
+    return;
+  }
+
   const data = await loadWave(entry, info.size || 0, info.ext);
   if (token !== state.preview.token || !canvas.isConnected) return;
 
@@ -433,6 +506,18 @@ async function wireAudioPreview(entry, info, body, token) {
       }
     });
   }
+}
+
+async function wireSoundfontPreview(entry, info, body, token) {
+  observeSoundfontTiles(body);
+  const meta = await soundfontMeta(entry.path, entry.modified || 0, info.size || 0);
+  if (token !== state.preview.token || !body.isConnected || !meta) return;
+  setMetaField(body, 'sfName', meta.name || '');
+  setMetaField(body, 'sfPresets', meta.presetCount ? humanCount(meta.presetCount) : '');
+  setMetaField(body, 'sfInstruments', meta.instrumentCount ? humanCount(meta.instrumentCount) : '');
+  setMetaField(body, 'sfSamples', meta.sampleCount ? humanCount(meta.sampleCount) : '');
+  setMetaField(body, 'sfEngine', meta.engine || '');
+  setMetaField(body, 'sfVersion', meta.version || '');
 }
 
 function wireVideoPreview(entry, info, body, token) {
@@ -638,6 +723,8 @@ export function renderPreview() {
         wireAudioPreview(entry, info, body, token);
       } else if (!info.isDir && info.kind === 'video') {
         wireVideoPreview(entry, info, body, token);
+      } else if (!info.isDir && isSoundfontEntry(entry)) {
+        wireSoundfontPreview(entry, info, body, token);
       }
     } catch (error) {
       if (token !== state.preview.token) return;
@@ -676,6 +763,10 @@ function onPreviewClick(event) {
     app.reveal?.({ path });
   } else if (action === 'copy-path') {
     app.copyPath?.([{ path }]);
+  } else if (action === 'use-soundfont') {
+    setActiveSoundFont(path);
+  } else if (action === 'reset-soundfont') {
+    setActiveSoundFont(null);
   }
 }
 

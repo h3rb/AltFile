@@ -217,6 +217,7 @@ export const KIND_LABELS = {
   shortcut: 'Shortcut',
   font: 'Font',
   model: '3D Model',
+  soundfont: 'SoundFont',
   file: 'File',
   other: 'Group',
 };
@@ -232,6 +233,7 @@ export const KIND_COLORS = {
   shortcut: '#fda4af',
   font: '#a78bfa',
   model: '#38bdf8',
+  soundfont: '#34d399',
   file: '#94a3b8',
   other: '#64748b',
 };

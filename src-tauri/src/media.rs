@@ -27,8 +27,9 @@ fn mime_for(ext: &str) -> &'static str {
         "flac" => "audio/flac",
         "ogg" | "oga" | "opus" => "audio/ogg",
         "wma" => "audio/x-ms-wma",
-        "mid" | "midi" => "audio/midi",
+        "mid" | "midi" | "rmi" | "kar" => "audio/midi",
         "aiff" => "audio/aiff",
+        "sf2" => "application/octet-stream",
         "gif" => "image/gif",
         _ => "application/octet-stream",
     }
@@ -130,7 +131,7 @@ pub fn serve<R: tauri::Runtime>(
     let ext = paths::ext_of(&name);
     let kind = paths::classify(&ext, false);
     let gif = ext == "gif";
-    if kind != "audio" && kind != "video" && !gif {
+    if kind != "audio" && kind != "video" && kind != "soundfont" && !gif {
         return empty(StatusCode::FORBIDDEN);
     }
     let cache = if gif {

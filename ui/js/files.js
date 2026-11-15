@@ -2,6 +2,7 @@ import { api, gifUrl, mediaUrl } from './api.js';
 import { state, activeTab, app, scheduleSave } from './state.js';
 import { icon, kindIcon } from './icons.js';
 import { fontTileHtml, observeFontTiles } from './fonts.js';
+import { soundfontTileHtml, observeSoundfontTiles } from './sf2.js';
 import { pageTileHtml, observePageTiles } from './pages.js';
 import { detailCellHtml, observeDetails } from './details.js';
 import { cachedWave, fallbackPeaks, loadWave, drawWaveform } from './waveform.js';
@@ -156,13 +157,17 @@ function matchesFilter(entry, filter) {
   }
 }
 
+function touchedDate(entry) {
+  return Math.max(entry.modified || 0, entry.created || 0);
+}
+
 function compareEntries(a, b, sort) {
   if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
   let result = 0;
   if (sort.key === 'size') {
     result = a.size - b.size;
   } else if (sort.key === 'modified') {
-    result = a.modified - b.modified;
+    result = activeTab()?.view === 'list' ? touchedDate(a) - touchedDate(b) : a.modified - b.modified;
   } else if (sort.key === 'kind') {
     result = naturalCompare(kindLabel(a.kind), kindLabel(b.kind));
   }
@@ -309,6 +314,9 @@ function badgeHtml(entry) {
   if (entry.kind === 'model' && THUMB_MODELS.has((entry.ext || '').toLowerCase())) {
     return `<span class="thumb-badge">${icon('cube', 9)} ${esc(ext)}</span>`;
   }
+  if (entry.kind === 'soundfont') {
+    return `<span class="thumb-badge">${icon('piano', 9)} ${esc(ext || 'SF2')}</span>`;
+  }
   if (entry.kind === 'image' && entry.ext === 'gif') {
     return '<span class="thumb-badge">GIF</span>';
   }
@@ -382,7 +390,7 @@ function cardHtml(entry, index) {
   const hoverVideo = !entry.isDir && entry.kind === 'video';
   const thumbBody = entry.isDir
     ? folderTileHtml(entry)
-    : `${isoTileHtml(entry) || archiveTileHtml(entry) || fontTileHtml(entry) || pageTileHtml(entry) || `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>`}
+    : `${isoTileHtml(entry) || archiveTileHtml(entry) || fontTileHtml(entry) || soundfontTileHtml(entry) || pageTileHtml(entry) || `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>`}
         ${thumb ? '<img alt="" decoding="async" draggable="false">' : ''}`;
   return `
     <article class="${classes.join(' ')}" data-path="${esc(entry.path)}" data-index="${index}" title="${esc(entry.path)}">
@@ -422,7 +430,7 @@ function rowHtml(entry, index) {
         ${entry.isSymlink ? '<span class="symlink-badge">link</span>' : ''}
       </div>
       <div class="cell-size"${entry.isDir ? ` data-size-path="${esc(entry.path)}" data-size-mtime="${entry.modified || 0}"` : ''}>${entry.isDir ? '—' : esc(humanSize(entry.size))}</div>
-      <div class="cell-date">${esc(fmtDate(entry.modified))}</div>
+      <div class="cell-date" title="Latest of modified or created">${esc(fmtDate(touchedDate(entry)))}</div>
       <div class="cell-kind">${esc(kindLabel(entry.kind, entry.ext))}</div>
       ${detailCellHtml(entry)}
     </div>`;
@@ -455,7 +463,7 @@ function headHtml(tab) {
   return `
     <button class="${cls('name')}" type="button" data-sort="name">Name ${sortArrow(tab, 'name')}</button>
     <button class="${cls('size')}" type="button" data-sort="size">Size ${sortArrow(tab, 'size')}</button>
-    <button class="${cls('modified')}" type="button" data-sort="modified">Modified ${sortArrow(tab, 'modified')}</button>
+    <button class="${cls('modified')}" type="button" data-sort="modified" title="Latest of modified or created">Date ${sortArrow(tab, 'modified')}</button>
     <button class="${cls('kind')}" type="button" data-sort="kind">Kind ${sortArrow(tab, 'kind')}</button>
     <div class="head-cell detail">Details</div>`;
 }
@@ -622,6 +630,7 @@ export function renderFiles() {
   observeArchives();
   observeIso();
   observeFontTiles();
+  observeSoundfontTiles();
   observePageTiles();
   observeSizes();
   observeDetails();

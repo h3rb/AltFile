@@ -24,6 +24,7 @@ export const state = {
   vizDepth: 64,
   searchRecursive: false,
   modelSpin: true,
+  soundFont: null,
   themeHue: DEFAULT_HUE,
   showPlaylists: false,
   selectedPlaylistId: null,
@@ -152,6 +153,7 @@ export async function loadSession() {
     state.preview.open = saved.previewOpen !== false;
     state.searchRecursive = saved.searchRecursive === true;
     state.modelSpin = saved.modelSpin !== false;
+    state.soundFont = typeof saved.soundFont === 'string' && saved.soundFont ? saved.soundFont : null;
     state.showPlaylists = saved.showPlaylists === true;
     if (Number.isFinite(saved.themeHue)) {
       state.themeHue = ((saved.themeHue % 360) + 360) % 360;
@@ -222,6 +224,7 @@ export function captureSession() {
     vizDepth: state.vizDepth,
     searchRecursive: state.searchRecursive,
     modelSpin: state.modelSpin,
+    soundFont: state.soundFont,
     themeHue: state.themeHue,
     showPlaylists: state.showPlaylists,
     selectedPlaylistId: state.selectedPlaylistId,

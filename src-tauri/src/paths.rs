@@ -113,7 +113,7 @@ pub fn classify(ext: &str, is_dir: bool) -> &'static str {
         "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpg" | "mpeg" | "3gp"
         | "m2ts" | "ogv" => "video",
         "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "wma" | "opus" | "mid" | "midi"
-        | "aiff" => "audio",
+        | "rmi" | "kar" | "aiff" => "audio",
         "rs" | "js" | "mjs" | "cjs" | "ts" | "tsx" | "jsx" | "py" | "rb" | "go" | "java" | "c"
         | "h" | "cpp" | "hpp" | "cc" | "cs" | "php" | "swift" | "kt" | "kts" | "scala" | "sh"
         | "bash" | "zsh" | "ps1" | "bat" | "cmd" | "lua" | "r" | "sql" | "html" | "htm" | "css"
@@ -131,6 +131,7 @@ pub fn classify(ext: &str, is_dir: bool) -> &'static str {
         "obj" | "stl" | "ply" | "gltf" | "glb" | "dae" | "fbx" | "blend" | "3ds" | "3mf"
         | "usd" | "usda" | "usdz" | "abc" | "off" | "step" | "stp" | "iges" | "igs" | "wrl"
         | "vrml" | "lwo" => "model",
+        "sf2" => "soundfont",
         _ => "file",
     }
 }

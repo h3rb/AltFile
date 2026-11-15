@@ -30,9 +30,10 @@ import * as palette from './palette.js';
 import { openSettings } from './settings.js';
 import { initUpdates } from './updates.js';
 import { systemMenuItem } from './systemmenu.js';
+import { isSoundfontEntry } from './sf2.js';
 
 const VIEW_BUTTONS = { grid: 'view-grid', list: 'view-list', viz: 'view-viz' };
-const SORT_LABELS = { name: 'Name', size: 'Size', modified: 'Modified', kind: 'Kind' };
+const SORT_LABELS = { name: 'Name', size: 'Size', modified: 'Date', kind: 'Kind' };
 
 let pathEditing = false;
 let fsTimer = 0;
@@ -703,6 +704,8 @@ function entryMenu(entry, x, y, selection = null) {
   const list = selection === null ? files.selectedEntries() : selection;
   const targets = list.length ? list : [entry];
   const single = targets.length === 1;
+  const soundfont = single && isSoundfontEntry(entry);
+  const soundfontActive = soundfont && state.soundFont && state.soundFont.toLowerCase() === entry.path.toLowerCase();
   const playable = targets.filter((item) => !item.isDir && (item.kind === 'audio' || item.kind === 'video'));
   const systemMenu = systemMenuItem(entry.path);
   if (!single) systemMenu.hidden = true;
@@ -734,6 +737,18 @@ function entryMenu(entry, x, y, selection = null) {
         icon: 'list',
         hidden: !player.hasQueue(),
         onClick: () => player.showQueue(),
+      },
+      {
+        label: soundfontActive ? 'Using for MIDI playback' : 'Use for MIDI playback',
+        icon: soundfontActive ? 'check' : 'piano',
+        hidden: !soundfont,
+        onClick: () => player.setActiveSoundFont(entry.path),
+      },
+      {
+        label: 'Reset MIDI SoundFont',
+        icon: 'refresh',
+        hidden: !state.soundFont,
+        onClick: () => player.setActiveSoundFont(null),
       },
       {
         label: 'Open in new tab',
@@ -1046,6 +1061,14 @@ function onKeyDown(event) {
       files.moveFocusByDirection(direction, event.shiftKey);
     }
   }
+
+  if (!mod && !event.altKey && !event.isComposing && [...key].length === 1 && key !== ' ') {
+    event.preventDefault();
+    focusSearch();
+    const input = document.getElementById('search-input');
+    input.setRangeText(key, input.selectionStart, input.selectionEnd, 'end');
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: key }));
+  }
 }
 
 async function refreshPreservingSelection() {
@@ -1225,6 +1248,11 @@ function assignBridge() {
     clearSearch: clearQuery,
     closeTab,
     playMedia: player.playEntry,
+    setSoundFont: player.setActiveSoundFont,
+    refreshSoundFontUI: () => {
+      files.renderFiles();
+      preview.refreshPreviewSoon();
+    },
     addToPlaylist: player.addToPlaylist,
     addPathsToPlaylist: player.addPathsToPlaylist,
     openPlaylist: player.openPlaylistById,

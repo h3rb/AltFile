@@ -5,7 +5,7 @@ import { icon } from './icons.js';
 import { applyThemeHue, esc, humanSize, humanCount, clamp, debounce } from './util.js';
 import { renderFiles } from './files.js';
 import { setModelSpin } from './model.js';
-import { setLoop } from './player.js';
+import { setLoop, setActiveSoundFont, soundfontLabel } from './player.js';
 import { renderViz } from './viz.js';
 import { checkForUpdates, installUpdate, onUpdate, updateInfo } from './updates.js';
 
@@ -140,6 +140,16 @@ function settingsHtml() {
         </div>
         <div class="setting-control">
           <input type="checkbox" id="settings-media-loop"${state.media.loop ? ' checked' : ''}>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-main">
+          <div class="setting-label">MIDI SoundFont</div>
+          <div class="setting-desc">MIDI files play with a built-in generative General MIDI synth by default. Right-click any .sf2 file and choose <strong>Use for MIDI playback</strong> to play MIDI files with that SoundFont instead.</div>
+        </div>
+        <div class="setting-control">
+          <span class="nav-meta" id="settings-soundfont-name" title="${esc(state.soundFont || '')}">${esc(soundfontLabel())}</span>
+          <button class="mini-btn" id="settings-soundfont-reset" type="button"${state.soundFont ? '' : ' hidden'}>${icon('refresh', 12)} Use built-in</button>
         </div>
       </div>
     </div>
@@ -341,6 +351,17 @@ export function openSettings() {
 
   body.querySelector('#settings-media-loop')?.addEventListener('change', (event) => {
     setLoop(event.target.checked);
+  });
+
+  body.querySelector('#settings-soundfont-reset')?.addEventListener('click', () => {
+    setActiveSoundFont(null);
+    const name = body.querySelector('#settings-soundfont-name');
+    if (name) {
+      name.textContent = soundfontLabel();
+      name.title = '';
+    }
+    const reset = body.querySelector('#settings-soundfont-reset');
+    if (reset) reset.hidden = true;
   });
 
   body.querySelector('#settings-show-playlists')?.addEventListener('change', (event) => {

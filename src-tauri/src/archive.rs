@@ -520,97 +520,153 @@ fn read_rar(file: &mut File, col: &mut Collector) -> Option<()> {
     }
 }
 
-fn read_rar4(file: &mut File, col: &mut Collector) -> Option<()> {
-    loop {
-        let mut base = [0u8; 7];
-        if file.read_exact(&mut base).is_err() {
-            return Some(());
+fn rar4_name(raw: &[u8], unicode: bool) -> Option<String> {
+    if !unicode {
+        return Some(String::from_utf8_lossy(raw).into_owned());
+    }
+    let Some(separator) = raw.iter().position(|&byte| byte == 0) else {
+        return Some(String::from_utf8_lossy(raw).into_owned());
+    };
+    let original = &raw[..separator];
+    let mut encoded = Cursor::new(&raw[separator + 1..]);
+    let high = encoded.bytes(1)?[0] as u16;
+    let mut output = Vec::new();
+    let mut flags = 0u8;
+    let mut remaining = 0;
+    while encoded.at < encoded.buf.len() {
+        if remaining == 0 {
+            flags = encoded.bytes(1)?[0];
+            remaining = 4;
         }
+        match flags >> 6 {
+            0 => output.push(encoded.bytes(1)?[0] as u16),
+            1 => output.push((high << 8) | encoded.bytes(1)?[0] as u16),
+            2 => output.push(u16::from_le_bytes(encoded.bytes(2)?.try_into().ok()?)),
+            _ => {
+                let length = encoded.bytes(1)?[0];
+                let corrected = length & 0x80 != 0;
+                let correction = if corrected { encoded.bytes(1)?[0] } else { 0 };
+                let count = (length & 0x7f) as usize + 2;
+                for _ in 0..count {
+                    let byte = *original.get(output.len())?;
+                    output.push(if corrected {
+                        (high << 8) | byte.wrapping_add(correction) as u16
+                    } else {
+                        byte as u16
+                    });
+                }
+            }
+        }
+        if output.len() > u16::MAX as usize {
+            return None;
+        }
+        flags <<= 2;
+        remaining -= 1;
+    }
+    Some(String::from_utf16_lossy(&output))
+}
+
+fn read_rar4(file: &mut File, col: &mut Collector) -> Option<()> {
+    let file_len = file.metadata().ok()?.len();
+    let mut scanned = 0u64;
+    loop {
+        if file.stream_position().ok()? == file_len {
+            return (scanned > 0).then_some(());
+        }
+        let mut base = [0u8; 7];
+        file.read_exact(&mut base).ok()?;
         let head_type = base[2];
         let head_flags = le16(&base, 3);
         let head_size = le16(&base, 5) as usize;
-        if head_size < 7 {
+        let body_len = head_size.checked_sub(7)?;
+        scanned += head_size as u64;
+        if scanned > MAX_SCAN_BYTES {
+            col.truncated = true;
             return Some(());
         }
-        let has_data = head_flags & 0x8000 != 0;
-        let mut add_size = 0u64;
-        if has_data {
-            let mut raw = [0u8; 4];
-            file.read_exact(&mut raw).ok()?;
-            add_size = u32::from_le_bytes(raw) as u64;
-        }
-        let body_len = head_size - 7 - if has_data { 4 } else { 0 };
-        let mut body = vec![0u8; std::cmp::min(body_len, MAX_HEADER_BYTES)];
-        if !body.is_empty() && file.read_exact(&mut body).is_err() {
-            return Some(());
-        }
-        if body_len > body.len() {
-            file.seek(SeekFrom::Current((body_len - body.len()) as i64)).ok()?;
-        }
+        let mut body = vec![0u8; body_len];
+        file.read_exact(&mut body).ok()?;
+        let mut packed_size = if head_flags & 0x8000 != 0 {
+            u32::from_le_bytes(body.get(..4)?.try_into().ok()?) as u64
+        } else {
+            0
+        };
         if head_type == 0x73 {
             if head_flags & 0x0080 != 0 {
                 col.locked = true;
                 return Some(());
             }
-        } else if head_type == 0x74 && body.len() >= 25 {
-            let unp_size = le32(&body, 4) as u64;
+        } else if head_type == 0x74 {
+            body.get(..25)?;
+            packed_size = le32(&body, 0) as u64;
+            let mut unpacked_size = le32(&body, 4) as u64;
             let name_len = le16(&body, 19) as usize;
-            let mut offset = 25;
-            if head_flags & 0x0100 != 0 {
-                offset += 8;
+            let offset = if head_flags & 0x0100 != 0 {
+                body.get(..33)?;
+                packed_size |= (le32(&body, 25) as u64) << 32;
+                unpacked_size |= (le32(&body, 29) as u64) << 32;
+                33
+            } else {
+                25
+            };
+            let raw_name = body.get(offset..offset + name_len)?;
+            let mut name = rar4_name(raw_name, head_flags & 0x0200 != 0)?;
+            let is_dir = head_flags & 0x00E0 == 0x00E0;
+            if is_dir && !name.ends_with(['/', '\\']) {
+                name.push('/');
             }
-            if head_flags & 0x0400 != 0 {
-                offset += 8;
+            if !is_dir && head_flags & 0x0004 != 0 {
+                col.locked = true;
             }
-            if offset + name_len <= body.len() {
-                let name = String::from_utf8_lossy(&body[offset..offset + name_len]).into_owned();
-                let is_dir = head_flags & 0x00E0 == 0x00E0;
-                if !is_dir && head_flags & 0x0004 != 0 {
-                    col.locked = true;
-                }
-                if !col.add(&name, is_dir, if is_dir { 0 } else { unp_size }) {
-                    return Some(());
-                }
+            if head_flags & 0x0003 != 0 {
+                col.truncated = true;
+            }
+            if !col.add(&name, is_dir, if is_dir { 0 } else { unpacked_size }) {
+                return Some(());
             }
         } else if head_type == 0x7B {
             return Some(());
         }
-        if has_data && add_size > 0 {
-            file.seek(SeekFrom::Current(add_size as i64)).ok()?;
+        let next = file.stream_position().ok()?.checked_add(packed_size)?;
+        if next > file_len {
+            return None;
         }
+        file.seek(SeekFrom::Start(next)).ok()?;
     }
 }
 
 fn read_rar5(file: &mut File, col: &mut Collector) -> Option<()> {
-    let mut crc = [0u8; 4];
+    let file_len = file.metadata().ok()?.len();
+    let mut scanned = 0u64;
     loop {
-        if file.read_exact(&mut crc).is_err() {
-            return Some(());
+        if file.stream_position().ok()? == file_len {
+            return (scanned > 0).then_some(());
         }
-        let header_size = match read_vint_file(file) {
-            Some(size) => size,
-            None => return Some(()),
-        };
+        let mut crc = [0u8; 4];
+        file.read_exact(&mut crc).ok()?;
+        let header_size = read_vint_file(file)?;
         if header_size > MAX_HEADER_BYTES as u64 {
             return None;
         }
-        let mut header = vec![0u8; header_size as usize];
-        if file.read_exact(&mut header).is_err() {
+        scanned += header_size + 4;
+        if scanned > MAX_SCAN_BYTES {
+            col.truncated = true;
             return Some(());
         }
+        let mut header = vec![0u8; header_size as usize];
+        file.read_exact(&mut header).ok()?;
         let mut cursor = Cursor::new(&header);
         let head_type = cursor.vint()?;
         let flags = cursor.vint()?;
         let extra_size = if flags & 0x0001 != 0 { cursor.vint()? } else { 0 };
-        if extra_size > 0 {
-            if let Some(start) = header.len().checked_sub(extra_size as usize) {
-                if start >= cursor.at && rar5_extra_locked(&header[start..]) {
-                    col.locked = true;
-                }
-            }
-        }
         let data_size = if flags & 0x0002 != 0 { cursor.vint()? } else { 0 };
+        let extra_start = header.len().checked_sub(usize::try_from(extra_size).ok()?)?;
+        if cursor.at > extra_start {
+            return None;
+        }
+        cursor.buf = &header[..extra_start];
         if head_type == 2 {
+            col.locked |= rar5_extra_locked(&header[extra_start..])?;
             let file_flags = cursor.vint()?;
             let unp_size = cursor.vint()?;
             cursor.vint()?; // attributes
@@ -622,41 +678,41 @@ fn read_rar5(file: &mut File, col: &mut Collector) -> Option<()> {
             }
             cursor.vint()?; // compression info
             cursor.vint()?; // host OS
-            let name_len = cursor.vint()? as usize;
-            let name = String::from_utf8_lossy(cursor.bytes(name_len)?).into_owned();
+            let name_len = usize::try_from(cursor.vint()?).ok()?;
+            let mut name = String::from_utf8_lossy(cursor.bytes(name_len)?).into_owned();
             let is_dir = file_flags & 0x0001 != 0;
+            if is_dir && !name.ends_with('/') {
+                name.push('/');
+            }
+            if flags & 0x0018 != 0 {
+                col.truncated = true;
+            }
             if !col.add(&name, is_dir, if is_dir { 0 } else { unp_size }) {
                 return Some(());
             }
+        } else if head_type == 4 {
+            col.locked = true;
+            return Some(());
         } else if head_type == 5 {
             return Some(());
         }
-        if data_size > 0 {
-            file.seek(SeekFrom::Current(data_size as i64)).ok()?;
+        let next = file.stream_position().ok()?.checked_add(data_size)?;
+        if next > file_len {
+            return None;
         }
+        file.seek(SeekFrom::Start(next)).ok()?;
     }
 }
 
-fn rar5_extra_locked(extra: &[u8]) -> bool {
-    let mut at = 0;
-    while at < extra.len() {
-        let mut cursor = Cursor::new(&extra[at..]);
-        let Some(size) = cursor.vint() else {
-            return false;
-        };
-        let Some(kind) = cursor.vint() else {
-            return false;
-        };
-        if kind == 1 {
-            // File encryption record.
-            return true;
-        }
-        if size == 0 || size as usize > extra.len() - at {
-            return false;
-        }
-        at += size as usize;
+fn rar5_extra_locked(extra: &[u8]) -> Option<bool> {
+    let mut cursor = Cursor::new(extra);
+    let mut locked = false;
+    while cursor.at < extra.len() {
+        let size = usize::try_from(cursor.vint()?).ok()?;
+        let mut record = Cursor::new(cursor.bytes(size)?);
+        locked |= record.vint()? == 1;
     }
-    false
+    Some(locked)
 }
 
 fn sevenz_error_locked(err: &sevenz_rust2::Error) -> bool {
@@ -704,6 +760,9 @@ fn read_vint_file(file: &mut File) -> Option<u64> {
     for _ in 0..10 {
         let mut byte = [0u8; 1];
         file.read_exact(&mut byte).ok()?;
+        if shift == 63 && byte[0] > 1 {
+            return None;
+        }
         value |= ((byte[0] & 0x7f) as u64) << shift;
         if byte[0] & 0x80 == 0 {
             return Some(value);
@@ -729,6 +788,9 @@ impl<'a> Cursor<'a> {
         for _ in 0..10 {
             let byte = *self.buf.get(self.at)?;
             self.at += 1;
+            if shift == 63 && byte > 1 {
+                return None;
+            }
             value |= ((byte & 0x7f) as u64) << shift;
             if byte & 0x80 == 0 {
                 return Some(value);
@@ -965,7 +1027,7 @@ mod tests {
         let mut out = Vec::new();
         out.extend_from_slice(&0u16.to_le_bytes());
         out.push(0x74);
-        let flags: u16 = (if is_dir { 0x00E0 } else { 0 }) | extra_flags;
+        let flags: u16 = 0x8000 | (if is_dir { 0x00E0 } else { 0 }) | extra_flags;
         out.extend_from_slice(&flags.to_le_bytes());
         out.extend_from_slice(&((7 + body.len()) as u16).to_le_bytes());
         out.extend_from_slice(&body);
@@ -1001,6 +1063,29 @@ mod tests {
         out.push(0x7B);
         out.extend_from_slice(&0u16.to_le_bytes());
         out.extend_from_slice(&7u16.to_le_bytes());
+        out
+    }
+
+    fn rar4_large_header(name: &str, unp_size: u64) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&(unp_size as u32).to_le_bytes());
+        body.push(0);
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.push(20);
+        body.push(0x30);
+        body.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&((unp_size >> 32) as u32).to_le_bytes());
+        body.extend_from_slice(name.as_bytes());
+        let mut out = Vec::new();
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.push(0x74);
+        out.extend_from_slice(&(0x8000u16 | 0x0100).to_le_bytes());
+        out.extend_from_slice(&((7 + body.len()) as u16).to_le_bytes());
+        out.extend_from_slice(&body);
         out
     }
 
@@ -1065,8 +1150,7 @@ mod tests {
     }
 
     fn rar5_encrypted_bytes() -> Vec<u8> {
-        // One extra-area record: size 2 bytes, type 1 (file encryption).
-        let record = [0x02u8, 0x01];
+        let record = [0x01u8, 0x01];
         let name = b"secret.txt";
         let mut body = vint(record.len() as u64);
         body.extend_from_slice(&vint(0));
@@ -1305,6 +1389,88 @@ mod tests {
         assert_eq!(summary.bytes, 3072);
         assert_eq!(summary.kind, "Media Files");
         assert_eq!(summary.top[0], "clip.mp4");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn decodes_rar4_unicode_names() {
+        // "aé.txt" with position-aligned ASCII fallback "a_.txt": literal 'a',
+        // literal u16 'é', then copy 4. The copy indexes the fallback at the
+        // current output length (2), landing on ".txt" rather than "a_.t".
+        let mut raw = b"a_.txt".to_vec();
+        raw.push(0);
+        raw.push(0x00); // high byte
+        raw.extend_from_slice(&[0x2c, 0x61, 0xe9, 0x00, 0x02]);
+        assert_eq!(rar4_name(&raw, true).unwrap(), "aé.txt");
+
+        // Corrected copy run: high byte 0x04, correction +1 over "ab".
+        let raw = [b'a', b'b', 0, 0x04, 0xc0, 0x80, 0x01];
+        assert_eq!(
+            rar4_name(&raw, true).unwrap(),
+            String::from_utf16_lossy(&[0x0462, 0x0463])
+        );
+
+        assert_eq!(rar4_name(b"plain.txt", false).unwrap(), "plain.txt");
+        assert_eq!(rar4_name(b"no-separator", true).unwrap(), "no-separator");
+    }
+
+    #[test]
+    fn summarizes_rar4_large_entries() {
+        let mut bytes = rar4_bytes(&[]);
+        let end = bytes.split_off(bytes.len() - 7);
+        bytes.extend_from_slice(&rar4_large_header("big.bin", 5_000_000_000));
+        bytes.extend_from_slice(&end);
+        let path = temp_file("large.rar", &bytes);
+        let summary = summarize(&path).unwrap();
+        assert_eq!(summary.files, 1);
+        assert_eq!(summary.bytes, 5_000_000_000);
+        assert_eq!(summary.top[0], "big.bin");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn parses_rar5_timestamps_and_rejects_extra_area_overrun() {
+        let name = b"dated.txt";
+        let mut body = vint(0); // extra area size
+        body.extend_from_slice(&vint(0)); // data area size
+        body.extend_from_slice(&vint(0x0006)); // mtime + ctime present
+        body.extend_from_slice(&vint(4096));
+        body.extend_from_slice(&vint(0x20));
+        body.extend_from_slice(&0u32.to_le_bytes()); // mtime
+        body.extend_from_slice(&0u32.to_le_bytes()); // ctime
+        body.extend_from_slice(&vint(0));
+        body.extend_from_slice(&vint(0));
+        body.extend_from_slice(&vint(name.len() as u64));
+        body.extend_from_slice(name);
+        let mut bytes = b"Rar!\x1a\x07\x01\x00".to_vec();
+        let mut main = vint(0);
+        main.extend_from_slice(&vint(0));
+        bytes.extend(rar5_block(1, 0x05, &main));
+        bytes.extend(rar5_block(2, 0x03, &body));
+        bytes.extend(rar5_block(5, 0, &vint(0)));
+        let path = temp_file("dated.rar", &bytes);
+        let summary = summarize(&path).unwrap();
+        assert_eq!(summary.files, 1);
+        assert_eq!(summary.bytes, 4096);
+        assert_eq!(summary.top[0], "dated.txt");
+        let _ = fs::remove_file(path);
+
+        // Name length reaching into the extra area must reject, not misparse.
+        // Extra record kind 2 (not encryption) so the locked fallback stays off.
+        let record = [0x02u8, 0x02, 0x00];
+        let mut body = vint(record.len() as u64);
+        body.extend_from_slice(&vint(0)); // file flags
+        body.extend_from_slice(&vint(16));
+        body.extend_from_slice(&vint(0x20));
+        body.extend_from_slice(&vint(0));
+        body.extend_from_slice(&vint(0));
+        body.extend_from_slice(&vint(100));
+        body.extend_from_slice(b"short");
+        body.extend_from_slice(&record);
+        let mut bytes = b"Rar!\x1a\x07\x01\x00".to_vec();
+        bytes.extend(rar5_block(2, 0x01, &body));
+        let path = temp_file("overrun.rar", &bytes);
+        assert!(summarize(&path).is_none());
         let _ = fs::remove_file(path);
     }
 

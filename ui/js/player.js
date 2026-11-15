@@ -3,6 +3,8 @@ import { state, app, scheduleSave, mediaKindOf } from './state.js';
 import { icon } from './icons.js';
 import { esc, basename, dirname, clamp, fmtDuration, themeColor, uid } from './util.js';
 import { toast, showMenu, confirmDialog } from './dialogs.js';
+import { isMidiPath, renderMidi } from './midi.js';
+import { loadSoundfont } from './sf2.js';
 
 const AUDIO = 'audio';
 const VIDEO = 'video';
@@ -30,6 +32,8 @@ let scopeCtx = null;
 let scopePath = null;
 let scopeTriedAt = 0;
 const playbackListeners = new Set();
+let midiToken = 0;
+let midiLoading = false;
 
 function current() {
   const index = state.media.index;
@@ -242,7 +246,7 @@ function renderBar() {
   const item = current();
   const playlist = selectedPlaylist();
   ui.name.textContent = item ? item.name : 'Playlist';
-  ui.sub.textContent = item ? dirname(item.path) : `${state.media.queue.length} item${state.media.queue.length === 1 ? '' : 's'}`;
+  ui.sub.textContent = midiLoading ? 'Rendering MIDI…' : item ? dirname(item.path) : `${state.media.queue.length} item${state.media.queue.length === 1 ? '' : 's'}`;
   ui.count.textContent = String(state.media.queue.length);
   ui.playlistName.textContent = playlist ? playlist.name : 'No playlist';
   ui.playlistPick.title = playlist ? `Playlist: ${playlist.name}` : 'Choose a playlist';
@@ -378,6 +382,26 @@ function playIndex(index, { autoplay = true, user = true, startAt = null } = {})
   paintSeek(0, 0);
   bar.hidden = false;
   renderBar();
+  startEngine(item, autoplay);
+  scheduleSave();
+  notifyPlayback();
+}
+
+function setMidiLoading(value) {
+  midiLoading = value;
+  if (!ui) return;
+  const item = current();
+  ui.sub.textContent = value ? 'Rendering MIDI…' : item ? dirname(item.path) : '';
+}
+
+function startEngine(item, autoplay) {
+  const token = ++midiToken;
+  if (isMidiPath(item.path)) {
+    setMidiLoading(true);
+    loadMidiEngine(item, token, autoplay);
+    return;
+  }
+  setMidiLoading(false);
   engine.src = mediaUrl(item.path);
   engine.load();
   engine.volume = state.media.volume;
@@ -389,8 +413,67 @@ function playIndex(index, { autoplay = true, user = true, startAt = null } = {})
   } else {
     updatePlayButton();
   }
+}
+
+async function loadMidiEngine(item, token, autoplay) {
+  try {
+    let sf2 = null;
+    let sf2Key = 'gen';
+    if (state.soundFont) {
+      try {
+        sf2 = await loadSoundfont(state.soundFont);
+        sf2Key = state.soundFont;
+      } catch {
+        sf2 = null;
+        sf2Key = 'gen';
+      }
+    }
+    const result = await renderMidi(item.path, sf2, sf2Key);
+    if (token !== midiToken) return;
+    engine.src = result.url;
+    engine.load();
+    engine.volume = state.media.volume;
+    engine.muted = state.media.muted;
+    setMidiLoading(false);
+    if (autoplay) {
+      engine.play().catch((error) => {
+        if (error && (error.name === 'AbortError' || error.name === 'NotAllowedError')) return;
+      });
+    } else {
+      updatePlayButton();
+    }
+    notifyPlayback();
+  } catch (error) {
+    if (token !== midiToken) return;
+    setMidiLoading(false);
+    state.media.playing = false;
+    updatePlayButton();
+    if (userInitiated) {
+      toast(`Can't play “${item.name}” — ${String(error?.message || error)}`, { type: 'error' });
+    }
+  }
+}
+
+export function soundfontLabel() {
+  return state.soundFont ? basename(state.soundFont) : 'Built-in (generative)';
+}
+
+export function setActiveSoundFont(path) {
+  const next = path || null;
+  const changed = (state.soundFont || '') !== (next || '');
+  state.soundFont = next;
   scheduleSave();
-  notifyPlayback();
+  app.refreshSoundFontUI?.();
+  const item = current();
+  if (changed && item && isMidiPath(item.path)) {
+    const wasPlaying = !engine.paused && !engine.ended;
+    const at = Number(engine.currentTime) || 0;
+    playIndex(state.media.index, { autoplay: wasPlaying, startAt: at });
+  }
+  toast(next ? `MIDI SoundFont: ${basename(next)}` : 'MIDI SoundFont reset to built-in', {
+    type: 'success',
+    icon: 'piano',
+  });
 }
 
 export function playEntry(entry, { autoplay = true, startAt = null } = {}) {
@@ -648,6 +731,8 @@ function step(delta, wrap) {
 
 function clearEngine() {
   if (!engine) return;
+  midiToken += 1;
+  setMidiLoading(false);
   suppressError = true;
   pendingSeek = null;
   stopPulse();

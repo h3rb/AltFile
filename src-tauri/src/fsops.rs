@@ -18,6 +18,7 @@ pub struct Entry {
     pub is_symlink: bool,
     pub size: u64,
     pub modified: u64,
+    pub created: u64,
     pub ext: String,
     pub kind: String,
     pub hidden: bool,
@@ -108,6 +109,12 @@ pub fn list_dir(path: String, show_hidden: bool) -> Result<Listing, String> {
             is_symlink,
             size,
             modified: modified_ms(effective),
+            created: effective
+                .created()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
             ext,
             kind: kind.to_string(),
             hidden,

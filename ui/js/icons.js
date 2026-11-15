@@ -42,6 +42,7 @@ const ICONS = {
   disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.6"/><path d="M12 3a9 9 0 0 1 9 9"/>',
   terminal: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/>',
   font: '<path d="M5 19 12 5l7 14M8 14h8"/>',
+  piano: '<rect x="3" y="5" width="18" height="14" rx="1.6"/><path d="M9 5v14M15 5v14"/><path d="M7 5v6h2.4V5M13 5v6h2.4V5" fill="currentColor" stroke="none"/>',
   cube: '<path d="m12 2.8 8 4.4v9.6l-8 4.4-8-4.4V7.2z"/><path d="M12 11.6 4 7.2M12 11.6l8-4.4M12 11.6v9.6"/>',
   check: '<path d="m5 12 5 5L20 7"/>',
   alert: '<path d="M10.3 4.2 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 9v5M12 17.5h.01"/>',
@@ -84,6 +85,7 @@ const KIND_ICON = {
   shortcut: 'link',
   font: 'font',
   model: 'cube',
+  soundfont: 'piano',
   file: 'file',
   other: 'layers',
 };
