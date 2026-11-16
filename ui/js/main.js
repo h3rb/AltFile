@@ -194,6 +194,7 @@ function applyView() {
   if (vizPane) vizPane.hidden = !vizMode;
   if (filterbar) filterbar.hidden = vizMode;
   if (previewPane) previewPane.hidden = vizMode || !state.preview.open;
+  viz.syncVizWatch();
   updateToolbar();
 }
 

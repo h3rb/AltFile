@@ -50,6 +50,7 @@ export const state = {
     key: null,
     tabKey: null,
     scanPath: null,
+    watchPath: null,
   },
   renderLimit: 1500,
   booted: false,

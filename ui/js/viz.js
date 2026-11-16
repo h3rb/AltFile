@@ -35,6 +35,7 @@ let rects = [];
 let hoverPath = null;
 let paintFrame = 0;
 let observer = null;
+let refreshTimer = 0;
 
 function pathKey(path) {
   if (!path) return '';
@@ -154,6 +155,15 @@ export function ensureViz() {
   loadViz(false);
 }
 
+// Watches the folder currently shown in the treemap; stops when the viz view is left.
+export function syncVizWatch() {
+  const tab = activeTab();
+  const desired = tab && tab.view === 'viz' ? state.viz.scanPath || tab.path || null : null;
+  if (desired === state.viz.watchPath) return;
+  state.viz.watchPath = desired;
+  api.vizWatch(desired).catch(() => {});
+}
+
 export async function loadViz(force = false, rootPath = null) {
   const tab = activeTab();
   if (!tab) return;
@@ -165,6 +175,7 @@ export async function loadViz(force = false, rootPath = null) {
   if (!rootPath) state.viz.tabKey = key;
   state.viz.scanPath = path;
   state.viz.selectedPath = null;
+  syncVizWatch();
 
   if (!force && state.viz.cache.has(key)) {
     const cached = state.viz.cache.get(key);
@@ -643,17 +654,16 @@ function drawFolderGlyph(ctx, x, y, size, color) {
 }
 
 const NESTED_CHILD_LIMIT = 80;
+const NESTED_MIN_SHARE = 0.2;
+const NESTED_START_OPACITY = 0.75;
+const NESTED_OPACITY_STEP = 0.05;
+const NESTED_MIN_OPACITY = 0.25;
+const NESTED_MAX_DEPTH = 12;
+const NESTED_CELL_BUDGET = 6000;
 
-function drawFolderContents(ctx, node, x, y, w, h, hovered) {
-  const header = 19;
-  const innerX = x + 2;
-  const innerY = y + header;
-  const innerW = w - 4;
-  const innerH = h - header - 2;
-  if (innerW < 8 || innerH < 8) return;
-
+function nestedChildren(node) {
   let children = (node.children || []).filter((child) => child.size > 0);
-  if (!children.length) return;
+  if (!children.length) return children;
   if (children.length > NESTED_CHILD_LIMIT) {
     const rest = children.slice(NESTED_CHILD_LIMIT - 1);
     const restSize = rest.reduce((sum, child) => sum + child.size, 0);
@@ -668,6 +678,85 @@ function drawFolderContents(ctx, node, x, y, w, h, hovered) {
       });
     }
   }
+  return children;
+}
+
+// Draws one nested level, descending only into folders that take more than a fifth of this section.
+function drawNested(ctx, node, x, y, w, h, depth, hovered, budget) {
+  const opacity = NESTED_START_OPACITY - (depth - 2) * NESTED_OPACITY_STEP;
+  if (depth > NESTED_MAX_DEPTH || opacity < NESTED_MIN_OPACITY - 1e-6) return;
+  const children = nestedChildren(node);
+  if (!children.length || budget.cells <= 0) return;
+
+  const cells = [];
+  layoutTreemap(children, x, y, w, h, cells);
+  const minShare = node.size * NESTED_MIN_SHARE;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.globalAlpha = opacity;
+
+  for (const cell of cells) {
+    if (budget.cells <= 0) break;
+    budget.cells -= 1;
+    const { node: child, x: cx, y: cy, w: cw, h: ch } = cell;
+    if (cw < 1.2 || ch < 1.2) continue;
+    const color = colorFor(child);
+    const alpha = child.isDir ? (hovered ? 0.62 : 0.5) : hovered ? 0.78 : 0.66;
+
+    ctx.fillStyle = toRgba(color, alpha);
+    ctx.fillRect(cx + 0.5, cy + 0.5, Math.max(0, cw - 1), Math.max(0, ch - 1));
+    ctx.lineWidth = 0.7;
+    ctx.strokeStyle = 'rgba(3, 6, 10, 0.6)';
+    ctx.strokeRect(cx + 0.5, cy + 0.5, Math.max(0, cw - 1), Math.max(0, ch - 1));
+
+    const canNest =
+      child.isDir &&
+      !isSynthetic(child) &&
+      cw >= 44 &&
+      ch >= 30 &&
+      child.size > minShare &&
+      opacity - NESTED_OPACITY_STEP >= NESTED_MIN_OPACITY - 1e-6 &&
+      (child.children || []).some((grandchild) => grandchild.size > 0);
+
+    if (cw > 30 && ch > 12) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(cx + 1, cy + 1, Math.max(0, cw - 2), Math.max(0, ch - 2));
+      ctx.clip();
+      ctx.font = '500 9px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(242, 249, 255, 0.92)';
+      ctx.textBaseline = 'top';
+      ctx.fillText(fitText(ctx, child.name, cw - 7), cx + 3, cy + 2);
+      ctx.restore();
+    }
+
+    if (canNest) {
+      const header = 12;
+      const ix = cx + 1.5;
+      const iy = cy + header;
+      const iw = cw - 3;
+      const ih = ch - header - 1.5;
+      if (iw >= 10 && ih >= 10) {
+        drawNested(ctx, child, ix, iy, iw, ih, depth + 1, hovered, budget);
+      }
+    }
+  }
+
+  ctx.restore();
+}
+
+function drawFolderContents(ctx, node, x, y, w, h, hovered) {
+  const header = 19;
+  const innerX = x + 2;
+  const innerY = y + header;
+  const innerW = w - 4;
+  const innerH = h - header - 2;
+  if (innerW < 8 || innerH < 8) return;
+
+  if (!nestedChildren(node).length) return;
 
   ctx.save();
   ctx.beginPath();
@@ -682,32 +771,9 @@ function drawFolderContents(ctx, node, x, y, w, h, hovered) {
   ctx.fillStyle = 'rgba(3, 6, 10, 0.46)';
   ctx.fillRect(innerX, innerY, innerW, innerH);
 
-  const cells = [];
-  layoutTreemap(children, innerX, innerY, innerW, innerH, cells);
-  for (const cell of cells) {
-    const { node: child, x: cx, y: cy, w: cw, h: ch } = cell;
-    if (cw < 1.2 || ch < 1.2) continue;
-    const color = colorFor(child);
-    const alpha = child.isDir ? (hovered ? 0.62 : 0.5) : hovered ? 0.78 : 0.66;
-
-    ctx.fillStyle = toRgba(color, alpha);
-    ctx.fillRect(cx + 0.5, cy + 0.5, Math.max(0, cw - 1), Math.max(0, ch - 1));
-    ctx.lineWidth = 0.7;
-    ctx.strokeStyle = 'rgba(3, 6, 10, 0.6)';
-    ctx.strokeRect(cx + 0.5, cy + 0.5, Math.max(0, cw - 1), Math.max(0, ch - 1));
-
-    if (cw > 30 && ch > 12) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(cx + 1, cy + 1, Math.max(0, cw - 2), Math.max(0, ch - 2));
-      ctx.clip();
-      ctx.font = '500 9px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(242, 249, 255, 0.92)';
-      ctx.textBaseline = 'top';
-      ctx.fillText(fitText(ctx, child.name, cw - 7), cx + 3, cy + 2);
-      ctx.restore();
-    }
-  }
+  drawNested(ctx, node, innerX, innerY, innerW, innerH, 2, hovered, {
+    cells: NESTED_CELL_BUDGET,
+  });
 
   if (hovered) {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
@@ -735,6 +801,9 @@ function paint() {
   const focus = focusNode();
   const source = state.viz.loading ? state.viz.partial?.children || [] : focus?.children || [];
   const children = source.filter((child) => child.size > 0);
+  const sectionSize = state.viz.loading
+    ? children.reduce((sum, child) => sum + child.size, 0)
+    : focus?.size || 0;
 
   const cssWidth = canvas.clientWidth;
   const cssHeight = canvas.clientHeight;
@@ -779,7 +848,12 @@ function paint() {
 
     const folderBlock = node.isDir && !isSynthetic(node);
     const hasChildren = folderBlock && (node.children || []).some((child) => child.size > 0);
-    const showContents = hasChildren && w >= 60 && h >= 54;
+    const showContents =
+      hasChildren &&
+      w >= 60 &&
+      h >= 54 &&
+      sectionSize > 0 &&
+      node.size > sectionSize * NESTED_MIN_SHARE;
     if (showContents) drawFolderContents(ctx, node, x, y, w, h, hovered);
 
     trace();
@@ -1057,6 +1131,21 @@ function onPartialEvent(event) {
   schedulePaint();
 }
 
+function onChangedEvent(event) {
+  const payload = event.payload;
+  if (!payload || !payload.root) return;
+  const tab = activeTab();
+  if (!tab || tab.view !== 'viz') return;
+  if (!samePath(payload.root, state.viz.scanPath)) return;
+  if (state.viz.loading || refreshTimer) return;
+  refreshTimer = setTimeout(() => {
+    refreshTimer = 0;
+    const current = activeTab();
+    if (!current || current.view !== 'viz' || state.viz.loading || !state.viz.scanPath) return;
+    loadViz(true, state.viz.scanPath);
+  }, 250);
+}
+
 export function initViz() {
   const pane = document.getElementById('viz-pane');
   if (!pane) return;
@@ -1067,4 +1156,5 @@ export function initViz() {
   pane.addEventListener('dblclick', onCanvasDoubleClick);
   pane.addEventListener('contextmenu', onCanvasContextMenu);
   listen('viz:partial', onPartialEvent).catch(() => {});
+  listen('viz:changed', onChangedEvent).catch(() => {});
 }

@@ -31,6 +31,7 @@ pub struct AppState {
     pub portable: bool,
     pub scan_gen: Arc<AtomicU64>,
     pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
+    pub viz_watcher: Mutex<Option<notify::RecommendedWatcher>>,
     pub pending_path: Mutex<Option<String>>,
 }
 
@@ -318,6 +319,7 @@ pub fn run() {
                 portable: portable.is_some(),
                 scan_gen: Arc::new(AtomicU64::new(0)),
                 watcher: Mutex::new(None),
+                viz_watcher: Mutex::new(None),
                 pending_path: Mutex::new(launch_path),
             });
 
@@ -358,6 +360,7 @@ pub fn run() {
             thumbs::clear_thumbnail_cache,
             viz::viz_scan,
             viz::cancel_scan,
+            viz::viz_watch,
             search::search_files,
             settings::load_settings,
             settings::save_settings,

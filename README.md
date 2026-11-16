@@ -70,9 +70,11 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **Treemap visualization** for the active folder: squarified tiles, drill-down, hover tooltip, large-file and
   extension/contents insights, hidden-file support, and cancellable scans. Folder sizes are summed recursively
   over the whole subtree and scans have no entry cap; each scan returns one level of folder tiles, and drilling
-  into a folder re-scans it. The treemap fills in progressively while the scan runs, with folder tiles showing
-  their immediate children nested inside, and tile navigation stays locked (the scan strip above the canvas
-  offers Stop) until the scan finishes.
+  into a folder re-scans it. The treemap fills in progressively while the scan runs, with nested contents shown
+  for any folder taking more than a fifth of its section — one level deeper at a time, each level faded 5% more
+  (from 75% opacity) until it would drop below 25% — and tile navigation stays locked (the scan strip above the
+  canvas offers Stop) until the scan finishes. While open it watches the visualized folder recursively and
+  re-scans automatically when files change anywhere below it.
 - **Preview pane** with media thumbnails, file metadata, image dimensions, and text previews (UTF-8/UTF-16).
   Model files that the software renderer understands (`.stl`, `.obj`, `.ply`, `.3mf`) open in a slowly rotating
   WebGL view instead of a static poster, so the shape can be inspected without leaving the app. Rotation can
@@ -253,8 +255,8 @@ the executable at compile time.
   thumbnails, model renders for `.stl`/`.obj`/`.ply`/`.3mf`, and Linux `ffmpeg`/`pdftoppm` helpers. Served
   through the `thumb://` / `http://thumb.localhost` protocol with immutable cache headers.
 - `src-tauri/src/viz.rs` — recursive folder scan with no entry cap that streams partial trees through progress
-  events and supports generation-based cancellation; returns a one-level tree, largest files, and extension
-  statistics.
+  events and supports generation-based cancellation; returns a two-level tree with deeper levels populated
+  along folders that dominate their parents, plus largest files and extension statistics.
 - `src-tauri/src/search.rs` — fuzzy, gitignore-aware recursive filename search.
 - `src-tauri/src/shellmenu.rs` — Windows shell `IContextMenu` enumeration and invocation behind the System Menu.
 - `src-tauri/src/network.rs` — shared-folder discovery for the sidebar: `WNetEnumResourceW` for the browse

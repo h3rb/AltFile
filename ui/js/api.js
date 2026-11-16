@@ -64,6 +64,7 @@ export const api = {
   clearCache: () => invoke('clear_thumbnail_cache'),
   vizScan: (path, includeHidden) => invoke('viz_scan', { path, includeHidden }),
   cancelScan: () => invoke('cancel_scan'),
+  vizWatch: (path) => invoke('viz_watch', { path }),
   searchFiles: (path, query, limit, includeHidden) =>
     invoke('search_files', { path, query, limit, includeHidden }),
   loadSettings: () => invoke('load_settings'),

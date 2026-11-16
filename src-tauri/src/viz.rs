@@ -1,4 +1,5 @@
 use crate::{paths, AppState};
+use notify::Watcher;
 use serde::Serialize;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -6,7 +7,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, State};
 
 const MAX_CHILDREN: usize = 4_000;
@@ -93,6 +94,12 @@ impl PartialNode {
 const PREVIEW_CHILDREN: usize = 80;
 const PREVIEW_FOLDERS: usize = 80;
 
+// Deep tiles are only kept while a folder takes more than a fifth of its parent's area.
+const NESTED_SHARE: u64 = 5;
+const NESTED_MAX_DEPTH: usize = 12;
+const NESTED_CHILD_LIMIT: usize = 80;
+const NESTED_NODE_BUDGET: u64 = 20_000;
+
 fn preview_children(node: &VizNode) -> Vec<PartialNode> {
     let mut nodes: Vec<&VizNode> = node.children.iter().filter(|child| child.size > 0).collect();
     if nodes.is_empty() {
@@ -131,6 +138,8 @@ struct ScanCtx<'a> {
     errors: u64,
     cancelled: bool,
     last_emit: Instant,
+    quiet: bool,
+    nested_nodes: u64,
     root_label: String,
     root: VizNode,
     active: Option<VizNode>,
@@ -152,7 +161,9 @@ impl<'a> ScanCtx<'a> {
             }
             if self.last_emit.elapsed().as_millis() >= 110 {
                 self.last_emit = Instant::now();
-                self.emit_partial(dir);
+                if !self.quiet {
+                    self.emit_partial(dir);
+                }
             }
         }
         true
@@ -246,7 +257,8 @@ fn finish_child(ctx: &mut ScanCtx) {
     }
 }
 
-// Walks a retained top-level folder: direct files become child nodes, subfolders only add totals.
+// Walks a retained top-level folder: files become leaf nodes and subfolders become nodes sized by
+// their recursively measured contents.
 fn walk_child(path: &Path, ctx: &mut ScanCtx) {
     let read = match fs::read_dir(path) {
         Ok(r) => r,
@@ -258,6 +270,7 @@ fn walk_child(path: &Path, ctx: &mut ScanCtx) {
 
     let mut leftover_size = 0u64;
     let mut leftover_files = 0u64;
+    let mut leftover_dirs = 0u64;
 
     for item in read {
         if !ctx.step(path) {
@@ -288,10 +301,31 @@ fn walk_child(path: &Path, ctx: &mut ScanCtx) {
 
         if meta.is_dir() {
             let (bytes, files, dirs) = measure_dir(&entry_path, ctx);
-            if let Some(active) = ctx.active.as_mut() {
-                active.size += bytes;
-                active.file_count += files;
-                active.dir_count += dirs + 1;
+            let Some(active) = ctx.active.as_mut() else {
+                leftover_size += bytes;
+                leftover_files += files;
+                leftover_dirs += dirs + 1;
+                continue;
+            };
+            active.size += bytes;
+            active.file_count += files;
+            active.dir_count += dirs + 1;
+            if active.children.len() < MAX_CHILDREN {
+                active.children.push(VizNode {
+                    name: entry_name,
+                    path: paths::text(&entry_path),
+                    size: bytes,
+                    is_dir: true,
+                    kind: "folder".to_string(),
+                    ext: String::new(),
+                    file_count: files,
+                    dir_count: dirs,
+                    children: Vec::new(),
+                });
+            } else {
+                leftover_size += bytes;
+                leftover_files += files;
+                leftover_dirs += dirs + 1;
             }
         } else if meta.is_file() {
             let len = meta.len();
@@ -326,16 +360,16 @@ fn walk_child(path: &Path, ctx: &mut ScanCtx) {
         }
     }
 
-    if leftover_size > 0 || leftover_files > 0 {
+    if leftover_size > 0 || leftover_files > 0 || leftover_dirs > 0 {
         if let Some(active) = ctx.active.as_mut() {
             active.children.push(VizNode {
-                name: format!("{leftover_files} more items"),
+                name: format!("{} more items", leftover_files + leftover_dirs),
                 path: active.path.clone(),
                 size: leftover_size,
                 is_dir: true,
                 kind: "other".to_string(),
                 file_count: leftover_files,
-                dir_count: 0,
+                dir_count: leftover_dirs,
                 ..Default::default()
             });
         }
@@ -430,6 +464,15 @@ fn scan_root(path: &Path, ctx: &mut ScanCtx) {
 
 // Totals a folder recursively without building nodes; used below the retained depth.
 fn measure_dir(path: &Path, ctx: &mut ScanCtx) -> (u64, u64, u64) {
+    measure_dir_inner(path, ctx, true)
+}
+
+// Same walk without adding to the scan totals; used when enriching already-counted folders.
+fn measure_dir_quiet(path: &Path, ctx: &mut ScanCtx) -> (u64, u64, u64) {
+    measure_dir_inner(path, ctx, false)
+}
+
+fn measure_dir_inner(path: &Path, ctx: &mut ScanCtx, account: bool) -> (u64, u64, u64) {
     let mut bytes = 0u64;
     let mut files = 0u64;
     let mut dirs = 0u64;
@@ -470,7 +513,8 @@ fn measure_dir(path: &Path, ctx: &mut ScanCtx) -> (u64, u64, u64) {
         }
 
         if meta.is_dir() {
-            let (child_bytes, child_files, child_dirs) = measure_dir(&entry_path, ctx);
+            let (child_bytes, child_files, child_dirs) =
+                measure_dir_inner(&entry_path, ctx, account);
             bytes += child_bytes;
             files += child_files;
             dirs += child_dirs + 1;
@@ -478,12 +522,157 @@ fn measure_dir(path: &Path, ctx: &mut ScanCtx) -> (u64, u64, u64) {
             let len = meta.len();
             bytes += len;
             files += 1;
-            ctx.bytes += len;
-            ctx.record(&entry_name, &entry_path, len);
+            if account {
+                ctx.bytes += len;
+                ctx.record(&entry_name, &entry_path, len);
+            }
         }
     }
 
     (bytes, files, dirs)
+}
+
+// Lists one level of children for a deep tile. Their bytes were already counted by the parent's
+// measurement, so this pass only shapes nodes and never touches the scan totals.
+fn build_nested_children(node: &mut VizNode, ctx: &mut ScanCtx) {
+    let dir = std::path::PathBuf::from(&node.path);
+    let read = match fs::read_dir(&dir) {
+        Ok(r) => r,
+        Err(_) => {
+            ctx.errors += 1;
+            return;
+        }
+    };
+
+    let mut children: Vec<VizNode> = Vec::new();
+    for item in read {
+        if ctx.nested_nodes >= NESTED_NODE_BUDGET || !ctx.step(&dir) {
+            break;
+        }
+        let item = match item {
+            Ok(i) => i,
+            Err(_) => {
+                ctx.errors += 1;
+                continue;
+            }
+        };
+        let entry_name = item.file_name().to_string_lossy().into_owned();
+        let entry_path = item.path();
+        let meta = match item.metadata() {
+            Ok(m) => m,
+            Err(_) => {
+                ctx.errors += 1;
+                continue;
+            }
+        };
+        if paths::hidden(&entry_name, &meta) && !ctx.include_hidden {
+            continue;
+        }
+        if paths::is_reparse(&meta) {
+            continue;
+        }
+
+        if meta.is_dir() {
+            let (bytes, files, dirs) = measure_dir_quiet(&entry_path, ctx);
+            children.push(VizNode {
+                name: entry_name,
+                path: paths::text(&entry_path),
+                size: bytes,
+                is_dir: true,
+                kind: "folder".to_string(),
+                file_count: files,
+                dir_count: dirs,
+                ..Default::default()
+            });
+        } else if meta.is_file() {
+            let len = meta.len();
+            let ext = paths::ext_of(&entry_name);
+            let kind = paths::classify(&ext, false).to_string();
+            children.push(VizNode {
+                name: entry_name,
+                path: paths::text(&entry_path),
+                size: len,
+                is_dir: false,
+                ext,
+                kind,
+                file_count: 1,
+                ..Default::default()
+            });
+        } else {
+            continue;
+        }
+        ctx.nested_nodes += 1;
+    }
+
+    children.sort_by(|a, b| b.size.cmp(&a.size));
+    if children.len() > NESTED_CHILD_LIMIT {
+        let rest = children.split_off(NESTED_CHILD_LIMIT);
+        let rest_size: u64 = rest.iter().map(|child| child.size).sum();
+        let rest_files: u64 = rest.iter().map(|child| child.file_count).sum();
+        let rest_dirs: u64 = rest
+            .iter()
+            .map(|child| child.dir_count + if child.is_dir { 1 } else { 0 })
+            .sum();
+        if rest_size > 0 || rest_files > 0 {
+            children.push(VizNode {
+                name: format!("{} more items", rest_files + rest_dirs),
+                path: node.path.clone(),
+                size: rest_size,
+                is_dir: true,
+                kind: "other".to_string(),
+                file_count: rest_files,
+                dir_count: rest_dirs,
+                ..Default::default()
+            });
+        }
+    }
+    let covered: u64 = children.iter().map(|child| child.size).sum();
+    if node.size > covered {
+        let covered_files: u64 = children.iter().map(|child| child.file_count).sum();
+        let covered_dirs: u64 = children
+            .iter()
+            .map(|child| child.dir_count + if child.is_dir { 1 } else { 0 })
+            .sum();
+        let rest_files = node.file_count.saturating_sub(covered_files);
+        let rest_dirs = node.dir_count.saturating_sub(covered_dirs);
+        children.push(VizNode {
+            name: format!("{} more items", rest_files + rest_dirs),
+            path: node.path.clone(),
+            size: node.size - covered,
+            is_dir: true,
+            kind: "other".to_string(),
+            file_count: rest_files,
+            dir_count: rest_dirs,
+            ..Default::default()
+        });
+    }
+    node.children = children;
+}
+
+// Descends only through folders that dominate their parent's area, mirroring the frontend rule.
+fn populate_nested(parent: &mut VizNode, ctx: &mut ScanCtx, depth: usize) {
+    if ctx.cancelled || ctx.nested_nodes >= NESTED_NODE_BUDGET || depth + 2 > NESTED_MAX_DEPTH {
+        return;
+    }
+    let parent_size = parent.size;
+    if parent_size == 0 {
+        return;
+    }
+    for child in parent.children.iter_mut() {
+        if ctx.cancelled {
+            return;
+        }
+        if !child.is_dir || child.kind == "other" || child.size == 0 {
+            continue;
+        }
+        if child.size.saturating_mul(NESTED_SHARE) <= parent_size {
+            continue;
+        }
+        if child.children.is_empty() {
+            build_nested_children(child, ctx);
+        }
+        populate_nested(child, ctx, depth + 1);
+    }
 }
 
 fn scan(
@@ -508,6 +697,8 @@ fn scan(
         errors: 0,
         cancelled: false,
         last_emit: Instant::now(),
+        quiet: false,
+        nested_nodes: 0,
         root_label: paths::text(root),
         root: VizNode {
             name: label,
@@ -532,7 +723,12 @@ fn scan(
         return Err("cancelled".to_string());
     }
 
-    let node = std::mem::take(&mut ctx.root);
+    let mut node = std::mem::take(&mut ctx.root);
+    ctx.quiet = true;
+    populate_nested(&mut node, &mut ctx, 0);
+    if ctx.cancelled {
+        return Err("cancelled".to_string());
+    }
 
     let mut top_files: Vec<TopFile> = ctx
         .top
@@ -593,4 +789,66 @@ pub async fn viz_scan(
 #[tauri::command]
 pub fn cancel_scan(state: State<'_, AppState>) {
     state.scan_gen.fetch_add(1, Ordering::SeqCst);
+}
+
+// Watches the visualized folder recursively so changes anywhere below it can refresh the tree.
+#[tauri::command]
+pub fn viz_watch(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: Option<String>,
+) -> Result<(), String> {
+    let mut guard = state
+        .viz_watcher
+        .lock()
+        .map_err(|_| "Watcher state is unavailable".to_string())?;
+    *guard = None;
+
+    let Some(target) = path else {
+        return Ok(());
+    };
+    let root = paths::resolve_dir(&target)?;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut watcher = notify::recommended_watcher(
+        move |result: notify::Result<notify::Event>| {
+            if let Ok(event) = result {
+                if event.kind.is_access() {
+                    return;
+                }
+                let _ = tx.send(());
+            }
+        },
+    )
+    .map_err(|e| format!("Could not watch folder: {e}"))?;
+    watcher
+        .watch(&root, notify::RecursiveMode::Recursive)
+        .map_err(|e| format!("Could not watch folder: {e}"))?;
+
+    let handle = app.clone();
+    let root_label = paths::text(&root);
+    std::thread::spawn(move || {
+        // Coalesce bursts (copies, deletes, builds) into one refresh per quiet period.
+        while rx.recv().is_ok() {
+            let started = Instant::now();
+            loop {
+                match rx.recv_timeout(Duration::from_millis(900)) {
+                    Ok(()) => {
+                        if started.elapsed() >= Duration::from_secs(5) {
+                            break;
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            let payload = serde_json::json!({ "root": root_label });
+            if handle.emit("viz:changed", payload).is_err() {
+                return;
+            }
+        }
+    });
+
+    *guard = Some(watcher);
+    Ok(())
 }
