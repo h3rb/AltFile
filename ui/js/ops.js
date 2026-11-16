@@ -1,13 +1,13 @@
 import { api, listen } from './api.js';
-import { state, activeTab } from './state.js';
+import { state, app, activeTab } from './state.js';
 import {
   selectedEntries,
   focusedEntry,
   refreshFiles,
   selectPath,
 } from './files.js';
-import { promptDialog, confirmDialog, openModal, toast, dismiss } from './dialogs.js';
-import { esc, basename, dirname, humanSize, humanCount, fmtFullDate, kindLabel } from './util.js';
+import { promptDialog, extractDialog, confirmDialog, openModal, toast, dismiss } from './dialogs.js';
+import { esc, basename, dirname, joinPath, humanSize, humanCount, fmtFullDate, kindLabel } from './util.js';
 
 function targetEntries(entries) {
   if (entries && entries.length) return entries;
@@ -96,6 +96,48 @@ export async function removeEntries(entries) {
     });
     await refreshFiles({ silent: true });
   } catch (error) {
+    toast(String(error), { type: 'error' });
+  }
+}
+
+const ARCHIVE_SUFFIXES = ['.tar.gz', '.tar.bz2', '.tgz', '.tbz2', '.tbz'];
+
+function archiveStem(name) {
+  const lower = name.toLowerCase();
+  for (const suffix of ARCHIVE_SUFFIXES) {
+    if (lower.endsWith(suffix)) return name.slice(0, -suffix.length);
+  }
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(0, dot) : name;
+}
+
+function defaultExtractTarget(entry) {
+  return joinPath(dirname(entry.path), archiveStem(entry.name || basename(entry.path)));
+}
+
+export async function extractArchive(entry) {
+  if (!entry || !entry.path) return;
+  const name = entry.name || basename(entry.path);
+  const target = await extractDialog({ name, value: defaultExtractTarget(entry) });
+  if (!target) return;
+
+  toast(`Extracting “${name}”…`, { id: 'extract', type: 'busy', timeout: 0, icon: 'loader' });
+  try {
+    const dest = await api.extractArchive(entry.path, target);
+    dismiss('toast-extract');
+    const tab = activeTab();
+    if (tab && samePath(dirname(dest), tab.path)) {
+      await refreshFiles({ silent: true });
+      selectPath(dest);
+    }
+    toast(`Extracted to “${basename(dest)}”`, {
+      type: 'success',
+      icon: 'archive',
+      timeout: 6500,
+      action: { label: 'Open', onClick: () => app.navigate?.(dest) },
+    });
+  } catch (error) {
+    dismiss('toast-extract');
     toast(String(error), { type: 'error' });
   }
 }

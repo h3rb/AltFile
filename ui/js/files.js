@@ -12,6 +12,7 @@ import {
   humanSize,
   humanCount,
   fmtDate,
+  fmtFullDate,
   fmtRelative,
   naturalCompare,
   compactCount,
@@ -167,7 +168,7 @@ function compareEntries(a, b, sort) {
   if (sort.key === 'size') {
     result = a.size - b.size;
   } else if (sort.key === 'modified') {
-    result = activeTab()?.view === 'list' ? touchedDate(a) - touchedDate(b) : a.modified - b.modified;
+    result = touchedDate(a) - touchedDate(b);
   } else if (sort.key === 'kind') {
     result = naturalCompare(kindLabel(a.kind), kindLabel(b.kind));
   }
@@ -187,12 +188,13 @@ export function recomputeVisible() {
   if (state.searchResults !== null) {
     let items = state.searchResults.filter((entry) => matchesFilter(entry, tab.filter));
     if (query) {
-      for (const entry of items) {
+      items = items.filter((entry) => {
         const match = fuzzy(entry.name, query);
         if (match) matchMap.set(entry.path, match.indices);
-      }
+        return Boolean(match);
+      });
     }
-    state.visibleEntries = items;
+    state.visibleEntries = items.slice().sort((a, b) => compareEntries(a, b, tab.sort));
     return;
   }
 
@@ -200,20 +202,14 @@ export function recomputeVisible() {
   let items = base.filter((entry) => matchesFilter(entry, tab.filter));
 
   if (query) {
-    const scored = [];
-    for (const entry of items) {
+    items = items.filter((entry) => {
       const match = fuzzy(entry.name, query);
-      if (!match) continue;
-      matchMap.set(entry.path, match.indices);
-      scored.push({ entry, score: match.score });
-    }
-    scored.sort((a, b) => b.score - a.score || naturalCompare(a.entry.name, b.entry.name));
-    items = scored.map((item) => item.entry);
-  } else {
-    items = items.slice().sort((a, b) => compareEntries(a, b, tab.sort));
+      if (match) matchMap.set(entry.path, match.indices);
+      return Boolean(match);
+    });
   }
 
-  state.visibleEntries = items;
+  state.visibleEntries = items.slice().sort((a, b) => compareEntries(a, b, tab.sort));
 }
 
 export function currentItems() {
@@ -430,7 +426,7 @@ function rowHtml(entry, index) {
         ${entry.isSymlink ? '<span class="symlink-badge">link</span>' : ''}
       </div>
       <div class="cell-size"${entry.isDir ? ` data-size-path="${esc(entry.path)}" data-size-mtime="${entry.modified || 0}"` : ''}>${entry.isDir ? '—' : esc(humanSize(entry.size))}</div>
-      <div class="cell-date" title="Latest of modified or created">${esc(fmtDate(touchedDate(entry)))}</div>
+      <div class="cell-date" title="Latest of modified or created">${esc(fmtFullDate(touchedDate(entry)))}</div>
       <div class="cell-kind">${esc(kindLabel(entry.kind, entry.ext))}</div>
       ${detailCellHtml(entry)}
     </div>`;

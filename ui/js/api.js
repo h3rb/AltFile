@@ -51,6 +51,7 @@ export const api = {
   meshBounds: (path) => invoke('mesh_bounds', { path }),
   meshGeometry: (path) => invoke('mesh_geometry', { path }),
   archiveSummary: (path) => invoke('archive_summary', { path }),
+  extractArchive: (path, dest) => invoke('archive_extract', { path, dest }),
   isoInfo: (path) => invoke('iso_info', { path }),
   textPreview: (path, maxBytes) => invoke('text_preview', { path, maxBytes }),
   copyPaths: (sources, destDir, cut) => invoke('copy_paths', { sources, destDir, cut }),
@@ -61,7 +62,7 @@ export const api = {
   thumbnail: (path, size, force = false) => invoke('thumbnail', { path, size, force }),
   cacheStats: () => invoke('thumbnail_cache_stats'),
   clearCache: () => invoke('clear_thumbnail_cache'),
-  vizScan: (path, includeHidden, maxDepth) => invoke('viz_scan', { path, includeHidden, maxDepth }),
+  vizScan: (path, includeHidden) => invoke('viz_scan', { path, includeHidden }),
   cancelScan: () => invoke('cancel_scan'),
   searchFiles: (path, query, limit, includeHidden) =>
     invoke('search_files', { path, query, limit, includeHidden }),

@@ -237,6 +237,62 @@ export function promptDialog({
   });
 }
 
+export function extractDialog({ name, value }) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const body = document.createElement('div');
+    body.innerHTML = `
+      <label class="field">
+        <span>Destination folder</span>
+        <input class="text-input" type="text" spellcheck="false" autocomplete="off" data-autofocus>
+      </label>
+      <p class="field-hint">The archive is extracted here. The folder is created if it doesn't already exist.</p>
+    `;
+    const input = body.querySelector('input');
+    input.value = value;
+    const confirm = () => {
+      const next = input.value.trim();
+      if (!next) {
+        input.classList.add('invalid');
+        input.focus();
+        return false;
+      }
+      finish(next);
+      return true;
+    };
+    const modal = openModal({
+      title: 'Extract To',
+      subtitle: name,
+      body,
+      width: 540,
+      actions: [
+        { label: 'Cancel', kind: 'ghost', onClick: () => finish(null) },
+        {
+          label: 'Extract',
+          kind: 'primary',
+          onClick: () => {
+            if (!confirm()) return false;
+          },
+        },
+      ],
+      onClose: () => finish(null),
+    });
+    setTimeout(() => input.select(), 40);
+    input.addEventListener('input', () => input.classList.remove('invalid'));
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        if (confirm()) modal.close();
+      }
+    });
+  });
+}
+
 export function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = false, detail = '' }) {
   return new Promise((resolve) => {
     let settled = false;

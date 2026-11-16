@@ -21,7 +21,6 @@ export const state = {
   bookmarks: [],
   recent: [],
   thumbSize: 176,
-  vizDepth: 64,
   searchRecursive: false,
   modelSpin: true,
   soundFont: null,
@@ -44,11 +43,12 @@ export const state = {
     result: null,
     loading: false,
     error: null,
-    progress: null,
+    partial: null,
     requestToken: 0,
     focusPath: null,
     selectedPath: null,
     key: null,
+    tabKey: null,
     scanPath: null,
   },
   renderLimit: 1500,
@@ -147,9 +147,6 @@ export async function loadSession() {
     if (Number.isFinite(saved.thumbSize)) {
       state.thumbSize = clamp(saved.thumbSize, 120, 260);
     }
-    if (Number.isFinite(saved.vizDepth)) {
-      state.vizDepth = clamp(Math.round(saved.vizDepth), 1, 255);
-    }
     state.preview.open = saved.previewOpen !== false;
     state.searchRecursive = saved.searchRecursive === true;
     state.modelSpin = saved.modelSpin !== false;
@@ -221,7 +218,6 @@ export function captureSession() {
     bookmarks: state.bookmarks,
     recent: state.recent,
     thumbSize: state.thumbSize,
-    vizDepth: state.vizDepth,
     searchRecursive: state.searchRecursive,
     modelSpin: state.modelSpin,
     soundFont: state.soundFont,

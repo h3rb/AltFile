@@ -35,7 +35,7 @@ pub struct Summary {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Format {
+pub(crate) enum Format {
     Zip,
     Tar,
     TarGz,
@@ -46,7 +46,7 @@ enum Format {
     SevenZ,
 }
 
-fn format_of(name: &str) -> Option<Format> {
+pub(crate) fn format_of(name: &str) -> Option<Format> {
     let lower = name.to_ascii_lowercase();
     if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
         return Some(Format::TarGz);

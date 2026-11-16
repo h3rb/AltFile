@@ -1810,7 +1810,7 @@ body.panning * {
   flex: none;
   height: 34px;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 104px 146px 104px 164px;
+  grid-template-columns: minmax(220px, 1fr) 104px 156px 104px 164px;
   align-items: center;
   padding: 0 18px;
   border-bottom: 1px solid var(--border-soft);
@@ -1857,7 +1857,7 @@ body.panning * {
 
 .file-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 104px 146px 104px 164px;
+  grid-template-columns: minmax(220px, 1fr) 104px 156px 104px 164px;
   align-items: center;
   height: 34px;
   padding: 0 8px;
@@ -1963,6 +1963,9 @@ body.panning * {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cell-kind {
@@ -2678,12 +2681,20 @@ body.panning * {
   display: flex;
 }
 
+.viz-stage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
 .viz-canvas-wrap {
   position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
-  padding: 12px;
 }
 
 .viz-canvas {
@@ -2700,20 +2711,17 @@ body.panning * {
 }
 
 .viz-progress {
-  position: absolute;
-  top: 21px;
-  left: 23px;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 72%;
+  min-width: 0;
   padding: 7px 11px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: rgba(9, 13, 18, 0.9);
   color: var(--muted);
   font-size: 10.5px;
-  backdrop-filter: blur(8px);
 }
 
 .viz-progress .spin {
@@ -2722,10 +2730,15 @@ body.panning * {
 
 .viz-progress .progress-path {
   max-width: 360px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--dim);
+}
+
+.viz-progress .icon-btn {
+  margin-left: auto;
 }
 
 .viz-error,
@@ -3818,7 +3831,7 @@ body.panning * {
   }
 
   .files-head {
-    grid-template-columns: minmax(200px, 1fr) 96px 130px 124px;
+    grid-template-columns: minmax(200px, 1fr) 96px 140px 124px;
   }
 
   .files-head .head-cell:nth-child(4),
@@ -3827,7 +3840,7 @@ body.panning * {
   }
 
   .file-row {
-    grid-template-columns: minmax(200px, 1fr) 96px 130px 124px;
+    grid-template-columns: minmax(200px, 1fr) 96px 140px 124px;
   }
 }
 

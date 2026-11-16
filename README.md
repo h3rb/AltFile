@@ -55,6 +55,10 @@ treemap visualization of any folder — and it builds as a portable executable f
   extracting file data. Password-protected ZIP, RAR and 7Z archives (including archives with encrypted headers)
   show a padlock over the card, an "Encrypted" content type, and a password-required message in the preview
   pane instead of a contents list. The preview pane shows the same contents list with total uncompressed size.
+- **Extract archives**: right-click an archive (or use the preview pane's **Extract To…** button) to unpack it
+  into a folder that defaults to the archive's own folder plus its name without the extension. ZIP, TAR,
+  TAR.GZ/TGZ, TAR.BZ2/TBZ2, GZ, BZ2 and 7Z extract natively; RAR uses an installed bsdtar, 7-Zip or unrar.
+  Entry paths are validated so nothing is written outside the chosen folder.
 - **HTML thumbnails**: `.html` and `.htm` cards render the page itself in a live, sandboxed frame (scripts,
   forms and navigation disabled) served through the `page://` protocol, so relative stylesheets, images and
   fonts load from the file's own folder. Only visible cards mount a frame, and a bounded pool is recycled as
@@ -64,8 +68,11 @@ treemap visualization of any folder — and it builds as a portable executable f
   quotes, links and images) and served through the same sandboxed `page://` frame, with raw HTML escaped
   and script URLs stripped.
 - **Treemap visualization** for the active folder: squarified tiles, drill-down, hover tooltip, large-file and
-  extension/contents insights, hidden-file support, and cancellable scans. Folder tiles show their immediate
-  children nested inside so a folder's makeup is visible without drilling in.
+  extension/contents insights, hidden-file support, and cancellable scans. Folder sizes are summed recursively
+  over the whole subtree and scans have no entry cap; each scan returns one level of folder tiles, and drilling
+  into a folder re-scans it. The treemap fills in progressively while the scan runs, with folder tiles showing
+  their immediate children nested inside, and tile navigation stays locked (the scan strip above the canvas
+  offers Stop) until the scan finishes.
 - **Preview pane** with media thumbnails, file metadata, image dimensions, and text previews (UTF-8/UTF-16).
   Model files that the software renderer understands (`.stl`, `.obj`, `.ply`, `.3mf`) open in a slowly rotating
   WebGL view instead of a static poster, so the shape can be inspected without leaving the app. Rotation can
@@ -245,8 +252,9 @@ the executable at compile time.
 - `src-tauri/src/thumbs.rs` — hash-keyed thumbnail cache, image decoding with orientation, Windows shell
   thumbnails, model renders for `.stl`/`.obj`/`.ply`/`.3mf`, and Linux `ffmpeg`/`pdftoppm` helpers. Served
   through the `thumb://` / `http://thumb.localhost` protocol with immutable cache headers.
-- `src-tauri/src/viz.rs` — bounded recursive folder scan with progress events and generation-based
-  cancellation; returns a pruned tree, largest files, and extension statistics.
+- `src-tauri/src/viz.rs` — recursive folder scan with no entry cap that streams partial trees through progress
+  events and supports generation-based cancellation; returns a one-level tree, largest files, and extension
+  statistics.
 - `src-tauri/src/search.rs` — fuzzy, gitignore-aware recursive filename search.
 - `src-tauri/src/shellmenu.rs` — Windows shell `IContextMenu` enumeration and invocation behind the System Menu.
 - `src-tauri/src/network.rs` — shared-folder discovery for the sidebar: `WNetEnumResourceW` for the browse
@@ -276,6 +284,9 @@ the executable at compile time.
   gzip/bzip2, RAR 4/5 block walks, and 7Z headers (decoded through `sevenz-rust2` when the header is encoded).
   Encryption flags (ZIP general-purpose bit 0, RAR 4/5 encryption headers, 7Z AES coders) mark an archive as
   locked so the UI can replace contents with a padlock. It also votes on a content type from entry extensions.
+- `src-tauri/src/extract.rs` — archive extraction for the Extract To… action: ZIP through `zip`, the tar family
+  through `tar` with flate2/bzip2, plain gzip/bzip2 single files, 7Z through `sevenz-rust2`, and RAR through an
+  installed bsdtar, 7-Zip or unrar. Entry paths are sanitized to stay inside the destination folder.
 - `ui/js/` — the application: `files.js` (rendering, selection, lazy thumbnails), `fonts.js` (font specimens),
   `pages.js` (live sandboxed HTML and rendered Markdown card thumbnails), `details.js` (the smart Details
   column), `model.js` (rotating WebGL model preview), `viz.js` (treemap), `preview.js`, `ops.js`,

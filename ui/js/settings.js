@@ -198,20 +198,6 @@ function settingsHtml() {
     </div>` : ''}
 
     <div class="settings-group">
-      <div class="settings-group-title">Visualizer</div>
-      <div class="setting-row">
-        <div class="setting-main">
-          <div class="setting-label">Scan depth</div>
-          <div class="setting-desc">How many folder levels the visualization scans and keeps. Deeper folders are skipped. 1–255 levels.</div>
-        </div>
-        <div class="setting-control">
-          <input class="range" id="settings-viz-depth" type="range" min="1" max="255" step="1" value="${state.vizDepth}">
-          <span id="settings-viz-depth-value" class="nav-meta">${state.vizDepth} levels</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="settings-group">
       <div class="settings-group-title">Storage</div>
       <div class="cache-line">
         <span id="settings-cache">Measuring thumbnail cache…</span>
@@ -323,19 +309,6 @@ export function openSettings() {
     if (scroll) scroll.style.setProperty('--card-size', `${value}px`);
     scheduleSave();
     rerender();
-  });
-
-  const depthRange = body.querySelector('#settings-viz-depth');
-  const depthValue = body.querySelector('#settings-viz-depth-value');
-  depthRange?.addEventListener('input', () => {
-    const value = clamp(Math.round(Number(depthRange.value) || 64), 1, 255);
-    state.vizDepth = value;
-    if (depthValue) depthValue.textContent = `${value} level${value === 1 ? '' : 's'}`;
-    scheduleSave();
-  });
-  depthRange?.addEventListener('change', () => {
-    state.viz.cache.clear();
-    if (activeTab()?.view === 'viz') app.refreshViz?.();
   });
 
   body.querySelector('#settings-preview')?.addEventListener('change', (event) => {

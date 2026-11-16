@@ -127,6 +127,14 @@ function actionsHtml(entry, info) {
       <button class="mini-btn" type="button" data-action="reveal" data-path="${path}">${icon('external', 13)} Reveal</button>
       <button class="mini-btn" type="button" data-action="copy-path" data-path="${path}">${icon('copy', 13)} Copy path</button>`;
   }
+  if (archiveSupported(entry)) {
+    const name = esc(entry.name);
+    return `
+      <button class="mini-btn primary" type="button" data-action="extract" data-path="${path}" data-name="${name}">${icon('download', 13)} Extract To…</button>
+      <button class="mini-btn" type="button" data-action="open" data-path="${path}">${icon('open', 13)} Open</button>
+      <button class="mini-btn" type="button" data-action="reveal" data-path="${path}">${icon('external', 13)} Reveal</button>
+      <button class="mini-btn" type="button" data-action="copy-path" data-path="${path}">${icon('copy', 13)} Copy path</button>`;
+  }
   return `
     <button class="mini-btn primary" type="button" data-action="open" data-path="${path}">${icon('open', 13)} Open</button>
     <button class="mini-btn" type="button" data-action="reveal" data-path="${path}">${icon('external', 13)} Reveal</button>
@@ -761,6 +769,8 @@ function onPreviewClick(event) {
     app.visualizePath?.(path);
   } else if (action === 'reveal') {
     app.reveal?.({ path });
+  } else if (action === 'extract') {
+    app.extractArchive?.({ path, name: button.dataset.name || basename(path) });
   } else if (action === 'copy-path') {
     app.copyPath?.([{ path }]);
   } else if (action === 'use-soundfont') {

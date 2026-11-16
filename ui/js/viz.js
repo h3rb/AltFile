@@ -135,29 +135,34 @@ function cacheResult(key, result) {
   }
 }
 
+function vizKey(path, includeHidden) {
+  return `${pathKey(path)}|${includeHidden ? '1' : '0'}`;
+}
+
 export function ensureViz() {
   const tab = activeTab();
   if (!tab) return;
-  const key = `${pathKey(tab.path)}|${tab.showHidden ? '1' : '0'}|${state.vizDepth}`;
-  if (state.viz.key === key && state.viz.loading) {
+  const tabKey = vizKey(tab.path, tab.showHidden);
+  if (state.viz.loading) {
     renderViz();
     return;
   }
-  if (state.viz.result && state.viz.key === key && !state.viz.error) {
+  if (state.viz.result && state.viz.tabKey === tabKey && !state.viz.error) {
     renderViz();
     return;
   }
   loadViz(false);
 }
 
-export async function loadViz(force = false) {
+export async function loadViz(force = false, rootPath = null) {
   const tab = activeTab();
   if (!tab) return;
-  const path = tab.path;
+  const path = rootPath || tab.path;
   const includeHidden = tab.showHidden;
-  const key = `${pathKey(path)}|${includeHidden ? '1' : '0'}|${state.vizDepth}`;
+  const key = vizKey(path, includeHidden);
 
   state.viz.key = key;
+  if (!rootPath) state.viz.tabKey = key;
   state.viz.scanPath = path;
   state.viz.selectedPath = null;
 
@@ -166,7 +171,7 @@ export async function loadViz(force = false) {
     state.viz.result = cached;
     state.viz.loading = false;
     state.viz.error = null;
-    state.viz.progress = null;
+    state.viz.partial = null;
     state.viz.focusPath = cached.path;
     renderViz();
     return;
@@ -176,17 +181,18 @@ export async function loadViz(force = false) {
   state.viz.result = null;
   state.viz.loading = true;
   state.viz.error = null;
-  state.viz.progress = { scanned: 0, bytes: 0, current: path };
+  state.viz.partial = { scanned: 0, bytes: 0, current: path, children: [] };
   state.viz.focusPath = path;
+  hoverPath = null;
   renderViz();
 
   try {
-    const result = await api.vizScan(path, includeHidden, state.vizDepth);
+    const result = await api.vizScan(path, includeHidden);
     if (token !== state.viz.requestToken) return;
     cacheResult(key, result);
     state.viz.result = result;
     state.viz.loading = false;
-    state.viz.progress = null;
+    state.viz.partial = null;
     state.viz.error = null;
     state.viz.focusPath = result.path;
     renderViz();
@@ -194,7 +200,7 @@ export async function loadViz(force = false) {
     if (token !== state.viz.requestToken) return;
     const message = String(error);
     state.viz.loading = false;
-    state.viz.progress = null;
+    state.viz.partial = null;
     if (message.includes('cancelled')) {
       state.viz.error = null;
       renderViz();
@@ -205,19 +211,35 @@ export async function loadViz(force = false) {
   }
 }
 
+function crumbTrail(tabPath, resultPath) {
+  if (!tabPath || !withinPath(resultPath, tabPath)) {
+    return [{ path: resultPath, name: basename(resultPath) || resultPath }];
+  }
+  const base = tabPath.replace(/[\\/]+$/, '');
+  const trail = [{ path: base, name: basename(base) || base }];
+  if (samePath(tabPath, resultPath)) return trail;
+  const sep = resultPath.includes('/') && !resultPath.includes('\\') ? '/' : '\\';
+  const rest = resultPath.slice(base.length).split(/[\\/]+/).filter(Boolean);
+  let current = base;
+  for (const name of rest) {
+    current += sep + name;
+    trail.push({ path: current, name });
+  }
+  return trail;
+}
+
 function headerHtml(path) {
   const result = state.viz.result;
-  const focus = focusNode();
   const tab = activeTab();
   const hidden = Boolean(tab?.showHidden);
   const title = result ? basename(result.path) || result.path : basename(path) || path;
   let crumbs = '';
-  if (result && focus) {
-    const chain = pathChain(result.root, focus.path);
-    crumbs = chain
+  if (result) {
+    const trail = crumbTrail(tab?.path || result.path, result.path);
+    crumbs = trail
       .map(
         (node, index) =>
-          `<button class="viz-crumb${index === chain.length - 1 ? ' current' : ''}" type="button" data-viz-path="${esc(node.path)}" title="${esc(node.path)}">${esc(node.name)}</button>${index < chain.length - 1 ? `<span class="crumb-sep">${icon('chevronRight', 9)}</span>` : ''}`
+          `<button class="viz-crumb${index === trail.length - 1 ? ' current' : ''}" type="button" data-viz-path="${esc(node.path)}" title="${esc(node.path)}">${esc(node.name)}</button>${index < trail.length - 1 ? `<span class="crumb-sep">${icon('chevronRight', 9)}</span>` : ''}`
       )
       .join('');
   } else {
@@ -235,7 +257,7 @@ function headerHtml(path) {
       </div>
       <div class="viz-actions">
         <label class="switch">
-          <input type="checkbox" id="viz-hidden"${hidden ? ' checked' : ''}>
+          <input type="checkbox" id="viz-hidden"${hidden ? ' checked' : ''}${state.viz.loading ? ' disabled' : ''}>
           <span>Hidden</span>
         </label>
         <button class="icon-btn" type="button" data-action="viz-rescan" title="Rescan folder"${state.viz.loading ? ' disabled' : ''}>${icon('refresh', 15)}</button>
@@ -243,12 +265,12 @@ function headerHtml(path) {
     </div>`;
 }
 
-function progressHtml(progress) {
+function progressHtml(partial) {
   return `
     <div class="viz-progress" id="viz-progress">
       ${icon('loader', 14, 'spin')}
-      <span class="progress-text">Scanning ${humanCount(progress?.scanned || 0)} folders · ${humanSize(progress?.bytes || 0)}</span>
-      <span class="progress-path">${esc(progress?.current || '')}</span>
+      <span class="progress-text">Scanning ${humanCount(partial?.scanned || 0)} items · ${humanSize(partial?.bytes || 0)}</span>
+      <span class="progress-path">${esc(partial?.current || '')}</span>
       <button class="icon-btn tiny" type="button" data-action="viz-cancel" title="Stop scan">${icon('x', 12)}</button>
     </div>`;
 }
@@ -276,7 +298,7 @@ function errorOverlay(message) {
 }
 
 function overlayHtml() {
-  if (state.viz.loading) return progressHtml(state.viz.progress);
+  if (state.viz.loading) return '';
   if (state.viz.error) return errorOverlay(state.viz.error);
   if (!state.viz.result) {
     return emptyOverlay('Visualization cancelled', 'The scan was stopped before any data was collected.', '<button class="btn btn-primary" type="button" data-action="viz-rescan">Rescan</button>');
@@ -317,7 +339,6 @@ function barRow(name, bytes, total, color, files) {
 
 function statsCard(result, focus) {
   const notes = [];
-  if (result.truncated) notes.push('Scan hit the 600k entry limit — sizes are partial.');
   if (result.errors) notes.push(`${humanCount(result.errors)} folders could not be read.`);
   notes.push(`Scanned in ${(result.elapsedMs / 1000).toFixed(result.elapsedMs > 10000 ? 0 : 1)}s${result.includeHidden ? ' · hidden included' : ''}`);
 
@@ -462,6 +483,28 @@ function extensionsCard(result) {
 function insightsHtml() {
   const result = state.viz.result;
   if (!result) {
+    if (state.viz.loading) {
+      const partial = state.viz.partial || {};
+      const cells = [
+        [humanSize(partial.totalSize || 0), 'Size so far'],
+        [humanCount(partial.fileCount || 0), 'Files'],
+        [humanCount(partial.dirCount || 0), 'Folders'],
+        [humanCount(partial.scanned || 0), 'Entries'],
+      ];
+      return `
+        <div class="insight-card">
+          <div class="insight-title">${icon('chart', 12)} Overview</div>
+          <div class="stat-grid">
+            ${cells
+              .map(
+                ([value, label]) =>
+                  `<div class="stat"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>`
+              )
+              .join('')}
+          </div>
+          <div class="insight-empty">Scanning in progress — the treemap fills in as folders are measured.</div>
+        </div>`;
+    }
     return `
       <div class="insight-card">
         <div class="insight-title">${icon('sparkles', 12)} Insights</div>
@@ -477,11 +520,14 @@ function insightsHtml() {
 function shellHtml(path) {
   return `
     <div class="viz-body">
-      <div class="viz-canvas-wrap">
-        <canvas class="viz-canvas"></canvas>
-        ${overlayHtml()}
-        <div class="viz-tooltip" id="viz-tooltip" hidden></div>
-        <div class="viz-legend" id="viz-legend" hidden></div>
+      <div class="viz-stage">
+        ${state.viz.loading ? progressHtml(state.viz.partial) : ''}
+        <div class="viz-canvas-wrap">
+          <canvas class="viz-canvas"></canvas>
+          ${overlayHtml()}
+          <div class="viz-tooltip" id="viz-tooltip" hidden></div>
+          <div class="viz-legend" id="viz-legend" hidden></div>
+        </div>
       </div>
       <aside class="viz-insights">${insightsHtml()}</aside>
     </div>`;
@@ -687,7 +733,8 @@ function paint() {
   const canvas = document.querySelector('#viz-pane .viz-canvas');
   if (!canvas) return;
   const focus = focusNode();
-  const children = (focus?.children || []).filter((child) => child.size > 0);
+  const source = state.viz.loading ? state.viz.partial?.children || [] : focus?.children || [];
+  const children = source.filter((child) => child.size > 0);
 
   const cssWidth = canvas.clientWidth;
   const cssHeight = canvas.clientHeight;
@@ -877,11 +924,12 @@ function onPointerLeave() {
 }
 
 function drillTo(path) {
-  if (!path) return;
-  state.viz.focusPath = path;
+  if (!path || state.viz.loading) return;
+  const result = state.viz.result;
+  if (result && samePath(result.path, path)) return;
   state.viz.selectedPath = null;
   hoverPath = null;
-  renderViz();
+  loadViz(false, path);
 }
 
 function onCanvasClick(event) {
@@ -949,18 +997,18 @@ function onCanvasContextMenu(event) {
 function updateProgressDom() {
   const el = document.getElementById('viz-progress');
   if (!el) return;
-  const progress = state.viz.progress;
-  if (!progress) return;
+  const partial = state.viz.partial;
+  if (!partial) return;
   const text = el.querySelector('.progress-text');
   const pathEl = el.querySelector('.progress-path');
-  if (text) text.textContent = `Scanning ${humanCount(progress.scanned || 0)} folders · ${humanSize(progress.bytes || 0)}`;
-  if (pathEl) pathEl.textContent = progress.current || '';
+  if (text) text.textContent = `Scanning ${humanCount(partial.scanned || 0)} items · ${humanSize(partial.bytes || 0)}`;
+  if (pathEl) pathEl.textContent = partial.current || '';
 }
 
 function onVizClick(event) {
   const crumb = event.target.closest('[data-viz-path]');
   if (crumb) {
-    drillTo(crumb.dataset.vizPath);
+    if (!state.viz.loading) drillTo(crumb.dataset.vizPath);
     return;
   }
   const button = event.target.closest('[data-action]');
@@ -969,7 +1017,7 @@ function onVizClick(event) {
   const path = button.dataset.path || '';
   switch (action) {
     case 'viz-rescan':
-      loadViz(true);
+      loadViz(true, state.viz.scanPath || null);
       break;
     case 'viz-cancel':
       api.cancelScan().catch(() => {});
@@ -999,12 +1047,14 @@ function onVizChange(event) {
   app.setShowHidden?.(event.target.checked);
 }
 
-function onProgressEvent(event) {
+function onPartialEvent(event) {
   const payload = event.payload;
   if (!payload || !state.viz.loading) return;
   if (!samePath(payload.root, state.viz.scanPath)) return;
-  state.viz.progress = payload;
+  state.viz.partial = payload;
   updateProgressDom();
+  refreshInsights();
+  schedulePaint();
 }
 
 export function initViz() {
@@ -1016,5 +1066,5 @@ export function initViz() {
   pane.addEventListener('click', onCanvasClick);
   pane.addEventListener('dblclick', onCanvasDoubleClick);
   pane.addEventListener('contextmenu', onCanvasContextMenu);
-  listen('viz:progress', onProgressEvent).catch(() => {});
+  listen('viz:partial', onPartialEvent).catch(() => {});
 }

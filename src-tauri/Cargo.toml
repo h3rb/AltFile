@@ -1,6 +1,6 @@
 [package]
 name = "altfileexplorer"
-version = "0.2.11"
+version = "0.2.12"
 description = "A fast, dark, keyboard-first file explorer with smart thumbnails and a folder treemap"
 authors = ["h3rb"]
 license = "MIT"
@@ -36,7 +36,9 @@ arboard = "3"
 notify = "8"
 flate2 = "1"
 bzip2 = "0.6"
-sevenz-rust2 = { version = "0.25", default-features = false }
+sevenz-rust2 = { version = "0.25", default-features = false, features = ["util", "bzip2", "deflate", "ppmd"] }
+zip = { version = "2.6", default-features = false, features = ["deflate", "deflate64", "bzip2", "lzma", "zstd", "xz"] }
+tar = "0.4"
 ureq = { version = "2", features = ["json"] }
 
 [target.'cfg(windows)'.dependencies]

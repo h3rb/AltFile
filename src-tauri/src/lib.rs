@@ -1,4 +1,5 @@
 mod archive;
+mod extract;
 mod fonts;
 mod fsops;
 mod iso;
@@ -332,6 +333,7 @@ pub fn run() {
             fsops::folder_counts,
             fsops::folder_size,
             archive::archive_summary,
+            extract::archive_extract,
             iso::iso_info,
             fsops::list_places,
             network::network_places,
