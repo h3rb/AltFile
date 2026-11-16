@@ -72,9 +72,11 @@ treemap visualization of any folder — and it builds as a portable executable f
   over the whole subtree and scans have no entry cap; each scan returns one level of folder tiles, and drilling
   into a folder re-scans it. The treemap fills in progressively while the scan runs, with nested contents shown
   for any folder taking more than a fifth of its section — one level deeper at a time, each level faded 5% more
-  (from 75% opacity) until it would drop below 25% — and tile navigation stays locked (the scan strip above the
-  canvas offers Stop) until the scan finishes. While open it watches the visualized folder recursively and
-  re-scans automatically when files change anywhere below it.
+  (from 75% opacity) until it would drop below 25% — and tiles, breadcrumbs and drill-down stay clickable even
+  while a scan or refresh is still running (a navigation supersedes the in-flight scan); the scan strip above the
+  canvas offers Stop. While open it watches the visualized folder recursively and
+  re-scans automatically when files change anywhere below it; the refreshed scan is merged into the displayed
+  tree in place, so the current view stays interactive (and navigable) while it is being updated.
 - **Preview pane** with media thumbnails, file metadata, image dimensions, and text previews (UTF-8/UTF-16).
   Model files that the software renderer understands (`.stl`, `.obj`, `.ply`, `.3mf`) open in a slowly rotating
   WebGL view instead of a static poster, so the shape can be inspected without leaving the app. Rotation can

@@ -36,6 +36,8 @@ let hoverPath = null;
 let paintFrame = 0;
 let observer = null;
 let refreshTimer = 0;
+let refreshInflight = false;
+let refreshQueued = false;
 
 function pathKey(path) {
   if (!path) return '';
@@ -149,6 +151,12 @@ export function ensureViz() {
     return;
   }
   if (state.viz.result && state.viz.tabKey === tabKey && !state.viz.error) {
+    // Keep the live canvas when only sizes or the file list changed underneath it.
+    if (document.querySelector('#viz-pane .viz-canvas')) {
+      refreshInsights();
+      schedulePaint();
+      return;
+    }
     renderViz();
     return;
   }
@@ -222,6 +230,92 @@ export async function loadViz(force = false, rootPath = null) {
   }
 }
 
+// Change-triggered rescans patch the displayed tree instead of replacing it, so the
+// stale-but-usable view stays interactive until the delta is folded in.
+function nodeKey(node) {
+  return isSynthetic(node) ? `${pathKey(node.path)}\u0000${node.name}` : pathKey(node.path);
+}
+
+function mergeNode(target, fresh) {
+  target.name = fresh.name;
+  target.path = fresh.path;
+  target.kind = fresh.kind;
+  target.isDir = fresh.isDir;
+  target.ext = fresh.ext;
+  target.size = fresh.size;
+  target.fileCount = fresh.fileCount;
+  target.dirCount = fresh.dirCount;
+  const next = fresh.children || [];
+  if (!next.length) {
+    if (target.children && target.children.length) target.children = [];
+    return;
+  }
+  const pool = new Map();
+  for (const child of next) {
+    const key = nodeKey(child);
+    const queue = pool.get(key);
+    if (queue) queue.push(child);
+    else pool.set(key, [child]);
+  }
+  const merged = [];
+  for (const child of target.children || []) {
+    const queue = pool.get(nodeKey(child));
+    if (!queue || !queue.length) continue;
+    mergeNode(child, queue.shift());
+    merged.push(child);
+  }
+  for (const queue of pool.values()) merged.push(...queue);
+  target.children = merged;
+}
+
+function mergeVizResult(target, fresh) {
+  mergeNode(target.root, fresh.root);
+  target.totalSize = fresh.totalSize;
+  target.fileCount = fresh.fileCount;
+  target.dirCount = fresh.dirCount;
+  target.errors = fresh.errors;
+  target.elapsedMs = fresh.elapsedMs;
+  target.topFiles = fresh.topFiles;
+  target.extStats = fresh.extStats;
+  target.includeHidden = fresh.includeHidden;
+}
+
+async function refreshViz() {
+  if (refreshInflight) {
+    refreshQueued = true;
+    return;
+  }
+  const tab = activeTab();
+  const result = state.viz.result;
+  const path = state.viz.scanPath;
+  if (!tab || tab.view !== 'viz' || state.viz.loading || !result || !path) return;
+
+  refreshInflight = true;
+  const token = state.viz.requestToken;
+  const key = state.viz.key;
+  try {
+    const fresh = await api.vizScan(path, tab.showHidden);
+    if (token !== state.viz.requestToken || state.viz.result !== result) return;
+    mergeVizResult(result, fresh);
+    if (!findNode(result.root, state.viz.focusPath)) state.viz.focusPath = result.path;
+    if (state.viz.selectedPath && !findNode(result.root, state.viz.selectedPath)) {
+      state.viz.selectedPath = null;
+    }
+    state.viz.error = null;
+    cacheResult(key, result);
+    refreshInsights();
+    schedulePaint();
+  } catch (error) {
+    // Cancellation means a newer scan took over; otherwise keep the stale tree on screen.
+  } finally {
+    refreshInflight = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      refreshViz();
+    }
+  }
+}
+
 function crumbTrail(tabPath, resultPath) {
   if (!tabPath || !withinPath(resultPath, tabPath)) {
     return [{ path: resultPath, name: basename(resultPath) || resultPath }];
@@ -240,22 +334,16 @@ function crumbTrail(tabPath, resultPath) {
 }
 
 function headerHtml(path) {
-  const result = state.viz.result;
   const tab = activeTab();
   const hidden = Boolean(tab?.showHidden);
-  const title = result ? basename(result.path) || result.path : basename(path) || path;
-  let crumbs = '';
-  if (result) {
-    const trail = crumbTrail(tab?.path || result.path, result.path);
-    crumbs = trail
-      .map(
-        (node, index) =>
-          `<button class="viz-crumb${index === trail.length - 1 ? ' current' : ''}" type="button" data-viz-path="${esc(node.path)}" title="${esc(node.path)}">${esc(node.name)}</button>${index < trail.length - 1 ? `<span class="crumb-sep">${icon('chevronRight', 9)}</span>` : ''}`
-      )
-      .join('');
-  } else {
-    crumbs = `<span class="viz-crumb current">${esc(path)}</span>`;
-  }
+  const title = basename(path) || path;
+  const trail = crumbTrail(tab?.path || path, path);
+  const crumbs = trail
+    .map(
+      (node, index) =>
+        `<button class="viz-crumb${index === trail.length - 1 ? ' current' : ''}" type="button" data-viz-path="${esc(node.path)}" title="${esc(node.path)}">${esc(node.name)}</button>${index < trail.length - 1 ? `<span class="crumb-sep">${icon('chevronRight', 9)}</span>` : ''}`
+    )
+    .join('');
 
   return `
     <div class="viz-header">
@@ -975,7 +1063,7 @@ function showTooltip(rect, clientX, clientY) {
 
 function onPointerMove(event) {
   const canvas = event.target.closest?.('.viz-canvas');
-  if (!canvas || state.viz.loading || state.viz.error) {
+  if (!canvas || state.viz.error) {
     hideTooltip();
     return;
   }
@@ -998,7 +1086,9 @@ function onPointerLeave() {
 }
 
 function drillTo(path) {
-  if (!path || state.viz.loading) return;
+  if (!path) return;
+  // Navigating away is always allowed; it supersedes any scan still filling the current view.
+  if (state.viz.loading && samePath(path, state.viz.scanPath)) return;
   const result = state.viz.result;
   if (result && samePath(result.path, path)) return;
   state.viz.selectedPath = null;
@@ -1008,7 +1098,7 @@ function drillTo(path) {
 
 function onCanvasClick(event) {
   const canvas = event.target.closest?.('.viz-canvas');
-  if (!canvas || state.viz.loading || state.viz.error) return;
+  if (!canvas || state.viz.error) return;
   const box = canvas.getBoundingClientRect();
   const hit = hitTest(event.clientX - box.left, event.clientY - box.top);
   if (!hit || isSynthetic(hit.node)) {
@@ -1026,7 +1116,7 @@ function onCanvasClick(event) {
 
 function onCanvasDoubleClick(event) {
   const canvas = event.target.closest?.('.viz-canvas');
-  if (!canvas || state.viz.loading || state.viz.error) return;
+  if (!canvas || state.viz.error) return;
   const box = canvas.getBoundingClientRect();
   const hit = hitTest(event.clientX - box.left, event.clientY - box.top);
   if (!hit || !hit.node.isDir || isSynthetic(hit.node)) return;
@@ -1038,7 +1128,7 @@ function onCanvasContextMenu(event) {
   const canvas = event.target.closest?.('.viz-canvas');
   if (!canvas) return;
   event.preventDefault();
-  if (state.viz.loading || state.viz.error) return;
+  if (state.viz.error) return;
   const box = canvas.getBoundingClientRect();
   const hit = hitTest(event.clientX - box.left, event.clientY - box.top);
   if (!hit) return;
@@ -1082,7 +1172,7 @@ function updateProgressDom() {
 function onVizClick(event) {
   const crumb = event.target.closest('[data-viz-path]');
   if (crumb) {
-    if (!state.viz.loading) drillTo(crumb.dataset.vizPath);
+    drillTo(crumb.dataset.vizPath);
     return;
   }
   const button = event.target.closest('[data-action]');
@@ -1141,8 +1231,8 @@ function onChangedEvent(event) {
   refreshTimer = setTimeout(() => {
     refreshTimer = 0;
     const current = activeTab();
-    if (!current || current.view !== 'viz' || state.viz.loading || !state.viz.scanPath) return;
-    loadViz(true, state.viz.scanPath);
+    if (!current || current.view !== 'viz') return;
+    refreshViz();
   }, 250);
 }
 
