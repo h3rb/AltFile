@@ -21,6 +21,7 @@ export const state = {
   bookmarks: [],
   recent: [],
   thumbSize: 176,
+  nestedShare: 1,
   searchRecursive: false,
   modelSpin: true,
   soundFont: null,
@@ -148,6 +149,9 @@ export async function loadSession() {
     if (Number.isFinite(saved.thumbSize)) {
       state.thumbSize = clamp(saved.thumbSize, 120, 260);
     }
+    if (Number.isFinite(saved.nestedShare)) {
+      state.nestedShare = clamp(Math.round(saved.nestedShare), 1, 50);
+    }
     state.preview.open = saved.previewOpen !== false;
     state.searchRecursive = saved.searchRecursive === true;
     state.modelSpin = saved.modelSpin !== false;
@@ -219,6 +223,7 @@ export function captureSession() {
     bookmarks: state.bookmarks,
     recent: state.recent,
     thumbSize: state.thumbSize,
+    nestedShare: state.nestedShare,
     searchRecursive: state.searchRecursive,
     modelSpin: state.modelSpin,
     soundFont: state.soundFont,

@@ -62,7 +62,10 @@ export const api = {
   thumbnail: (path, size, force = false) => invoke('thumbnail', { path, size, force }),
   cacheStats: () => invoke('thumbnail_cache_stats'),
   clearCache: () => invoke('clear_thumbnail_cache'),
-  vizScan: (path, includeHidden) => invoke('viz_scan', { path, includeHidden }),
+  vizScan: (path, includeHidden, nestedShare = 1) =>
+    invoke('viz_scan', { path, includeHidden, nestedShare }),
+  vizCacheGet: (key) => invoke('viz_cache_get', { key }),
+  vizCachePut: (key, savedAt, result) => invoke('viz_cache_put', { key, savedAt, result }),
   cancelScan: () => invoke('cancel_scan'),
   vizWatch: (path) => invoke('viz_watch', { path }),
   searchFiles: (path, query, limit, includeHidden) =>
@@ -72,6 +75,8 @@ export const api = {
   takeLaunchPath: () => invoke('take_launch_path'),
   openWindowMenu: () => invoke('open_window_menu'),
   installExplorerMenu: () => invoke('install_explorer_menu'),
+  uninstallExplorerMenu: () => invoke('uninstall_explorer_menu'),
+  explorerMenuStatus: () => invoke('explorer_menu_status'),
   installUpdate: () => invoke('install_update'),
 };
 

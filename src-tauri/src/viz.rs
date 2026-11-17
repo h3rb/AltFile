@@ -94,8 +94,6 @@ impl PartialNode {
 const PREVIEW_CHILDREN: usize = 80;
 const PREVIEW_FOLDERS: usize = 80;
 
-// Deep tiles are only kept while a folder takes more than a fifth of its parent's area.
-const NESTED_SHARE: u64 = 5;
 const NESTED_MAX_DEPTH: usize = 12;
 const NESTED_CHILD_LIMIT: usize = 80;
 const NESTED_NODE_BUDGET: u64 = 20_000;
@@ -140,6 +138,7 @@ struct ScanCtx<'a> {
     last_emit: Instant,
     quiet: bool,
     nested_nodes: u64,
+    nested_share: u64,
     root_label: String,
     root: VizNode,
     active: Option<VizNode>,
@@ -649,7 +648,8 @@ fn build_nested_children(node: &mut VizNode, ctx: &mut ScanCtx) {
     node.children = children;
 }
 
-// Descends only through folders that dominate their parent's area, mirroring the frontend rule.
+// Descends only through folders that take more than the configured share of their parent's area,
+// mirroring the frontend rule.
 fn populate_nested(parent: &mut VizNode, ctx: &mut ScanCtx, depth: usize) {
     if ctx.cancelled || ctx.nested_nodes >= NESTED_NODE_BUDGET || depth + 2 > NESTED_MAX_DEPTH {
         return;
@@ -665,7 +665,7 @@ fn populate_nested(parent: &mut VizNode, ctx: &mut ScanCtx, depth: usize) {
         if !child.is_dir || child.kind == "other" || child.size == 0 {
             continue;
         }
-        if child.size.saturating_mul(NESTED_SHARE) <= parent_size {
+        if child.size.saturating_mul(100) <= parent_size.saturating_mul(ctx.nested_share) {
             continue;
         }
         if child.children.is_empty() {
@@ -679,6 +679,7 @@ fn scan(
     app: &tauri::AppHandle,
     root: &Path,
     include_hidden: bool,
+    nested_share: u64,
     gen: u64,
     current_gen: Arc<AtomicU64>,
 ) -> Result<VizResult, String> {
@@ -699,6 +700,7 @@ fn scan(
         last_emit: Instant::now(),
         quiet: false,
         nested_nodes: 0,
+        nested_share,
         root_label: paths::text(root),
         root: VizNode {
             name: label,
@@ -774,13 +776,15 @@ pub async fn viz_scan(
     state: State<'_, AppState>,
     path: String,
     include_hidden: bool,
+    nested_share: u64,
 ) -> Result<VizResult, String> {
     let root = paths::resolve_dir(&path)?;
+    let nested_share = nested_share.clamp(1, 50);
     let gen = state.scan_gen.fetch_add(1, Ordering::SeqCst) + 1;
     let current_gen = state.scan_gen.clone();
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        scan(&app_handle, &root, include_hidden, gen, current_gen)
+        scan(&app_handle, &root, include_hidden, nested_share, gen, current_gen)
     })
     .await
     .map_err(|e| format!("Scan task failed: {e}"))?

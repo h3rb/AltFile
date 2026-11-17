@@ -71,12 +71,15 @@ treemap visualization of any folder — and it builds as a portable executable f
   extension/contents insights, hidden-file support, and cancellable scans. Folder sizes are summed recursively
   over the whole subtree and scans have no entry cap; each scan returns one level of folder tiles, and drilling
   into a folder re-scans it. The treemap fills in progressively while the scan runs, with nested contents shown
-  for any folder taking more than a fifth of its section — one level deeper at a time, each level faded 5% more
+  for any folder taking more than its depth threshold of the section (1% by default, adjustable from 1% to 50% in
+  Settings) — one level deeper at a time, each level faded 5% more
   (from 75% opacity) until it would drop below 25% — and tiles, breadcrumbs and drill-down stay clickable even
   while a scan or refresh is still running (a navigation supersedes the in-flight scan); the scan strip above the
   canvas offers Stop. While open it watches the visualized folder recursively and
   re-scans automatically when files change anywhere below it; the refreshed scan is merged into the displayed
-  tree in place, so the current view stays interactive (and navigable) while it is being updated.
+  tree in place, so the current view stays interactive (and navigable) while it is being updated. Completed
+  scans are also cached on disk, so returning to a folder — even after a restart — reopens its map instantly;
+  a cached map that has not been opened for 15 minutes is shown immediately and re-scanned in the background.
 - **Preview pane** with media thumbnails, file metadata, image dimensions, and text previews (UTF-8/UTF-16).
   Model files that the software renderer understands (`.stl`, `.obj`, `.ply`, `.3mf`) open in a slowly rotating
   WebGL view instead of a static poster, so the shape can be inspected without leaving the app. Rotation can
@@ -131,10 +134,12 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **System Menu** (Windows): right-click any drive, file or folder — including treemap tiles — and open
   the real shell context menu, with shell extensions and submenus, as a submenu of the app menu.
 - **File Explorer integration** (Windows): **Settings → Windows integration → Add AltFile Context Menu Items**
-  adds **Explore in AltFile** to the right-click menu for folders. It is a per-user registration and needs no
-  administrator rights. Choosing it launches the app at that folder; if AltFile is already running, the window
-  comes to the front and its active tab navigates there, while the second launch hands its request to the first
-  instance and exits.
+  adds **Explore in AltFile** to the right-click menu for folders and for empty folder backgrounds. It is a
+  per-user registration and needs no administrator rights. Once installed, the same button reads **Remove AltFile
+  Context Menu Items** and undoes the registration. Windows 11 shows these entries in the classic menu,
+  so reach them with **Show more options** (or Shift+F10 / the Menu key). Choosing the entry launches the app
+  at that folder; if AltFile is already running, the window comes to the front and its active tab navigates
+  there, while the second launch hands its request to the first instance and exits.
 - **Keyboard-first**: command palette, quick paths, vim-free arrow navigation, and standard shortcuts.
 - **Update check and in-place updates**: on launch (at most once every six hours) the app asks the GitHub
   releases API for the latest release. When a newer version exists, a version pill appears on the Settings

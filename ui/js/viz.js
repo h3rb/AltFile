@@ -14,7 +14,9 @@ import {
 import { showMenu } from './dialogs.js';
 import { systemMenuItem } from './systemmenu.js';
 
-const MAX_CACHED_SCANS = 6;
+const MAX_CACHED_SCANS = 12;
+// A cached tree opened after this long is shown immediately and re-scanned in the background.
+const VIZ_STALE_MS = 15 * 60 * 1000;
 const DIR_PALETTE = ['#2dd4bf', '#60a5fa', '#a78bfa', '#f472b6', '#fbbf24', '#4ade80', '#fb923c'];
 const EXT_GROUPS = {
   image: 'png jpg jpeg gif webp bmp ico svg avif tif tiff heic',
@@ -129,8 +131,9 @@ function selectedNode() {
   return node && !isSynthetic(node) ? node : null;
 }
 
-function cacheResult(key, result) {
-  state.viz.cache.set(key, result);
+function cacheResult(key, result, savedAt = Date.now()) {
+  state.viz.cache.delete(key);
+  state.viz.cache.set(key, { result, savedAt, accessedAt: Date.now() });
   while (state.viz.cache.size > MAX_CACHED_SCANS) {
     const oldest = state.viz.cache.keys().next().value;
     if (oldest === undefined) break;
@@ -138,8 +141,12 @@ function cacheResult(key, result) {
   }
 }
 
+function persistViz(key, result, savedAt = Date.now()) {
+  api.vizCachePut(key, savedAt, result).catch(() => {});
+}
+
 function vizKey(path, includeHidden) {
-  return `${pathKey(path)}|${includeHidden ? '1' : '0'}`;
+  return `${pathKey(path)}|${includeHidden ? '1' : '0'}|${state.nestedShare}`;
 }
 
 export function ensureViz() {
@@ -185,18 +192,40 @@ export async function loadViz(force = false, rootPath = null) {
   state.viz.selectedPath = null;
   syncVizWatch();
 
-  if (!force && state.viz.cache.has(key)) {
-    const cached = state.viz.cache.get(key);
-    state.viz.result = cached;
+  // Any cached view or new scan supersedes work still running for an older target.
+  const token = ++state.viz.requestToken;
+
+  const showCached = (entry) => {
+    state.viz.result = entry.result;
     state.viz.loading = false;
     state.viz.error = null;
     state.viz.partial = null;
-    state.viz.focusPath = cached.path;
+    state.viz.focusPath = entry.result.path;
     renderViz();
-    return;
+  };
+
+  if (!force) {
+    const entry = state.viz.cache.get(key);
+    if (entry) {
+      const stale = Date.now() - entry.accessedAt > VIZ_STALE_MS;
+      entry.accessedAt = Date.now();
+      showCached(entry);
+      if (stale) refreshViz();
+      return;
+    }
   }
 
-  const token = ++state.viz.requestToken;
+  if (!force) {
+    const hit = await api.vizCacheGet(key).catch(() => null);
+    if (token !== state.viz.requestToken) return;
+    if (hit && hit.result && typeof hit.result === 'object') {
+      cacheResult(key, hit.result, Number(hit.savedAt) || Date.now());
+      showCached({ result: hit.result });
+      if (Number(hit.accessedMsAgo) > VIZ_STALE_MS) refreshViz();
+      return;
+    }
+  }
+
   state.viz.result = null;
   state.viz.loading = true;
   state.viz.error = null;
@@ -206,9 +235,10 @@ export async function loadViz(force = false, rootPath = null) {
   renderViz();
 
   try {
-    const result = await api.vizScan(path, includeHidden);
+    const result = await api.vizScan(path, includeHidden, state.nestedShare);
     if (token !== state.viz.requestToken) return;
     cacheResult(key, result);
+    persistViz(key, result);
     state.viz.result = result;
     state.viz.loading = false;
     state.viz.partial = null;
@@ -280,7 +310,7 @@ function mergeVizResult(target, fresh) {
   target.includeHidden = fresh.includeHidden;
 }
 
-async function refreshViz() {
+export async function refreshViz() {
   if (refreshInflight) {
     refreshQueued = true;
     return;
@@ -292,9 +322,9 @@ async function refreshViz() {
 
   refreshInflight = true;
   const token = state.viz.requestToken;
-  const key = state.viz.key;
+  const key = vizKey(path, tab.showHidden);
   try {
-    const fresh = await api.vizScan(path, tab.showHidden);
+    const fresh = await api.vizScan(path, tab.showHidden, state.nestedShare);
     if (token !== state.viz.requestToken || state.viz.result !== result) return;
     mergeVizResult(result, fresh);
     if (!findNode(result.root, state.viz.focusPath)) state.viz.focusPath = result.path;
@@ -302,7 +332,10 @@ async function refreshViz() {
       state.viz.selectedPath = null;
     }
     state.viz.error = null;
+    state.viz.key = key;
+    state.viz.tabKey = vizKey(tab.path, tab.showHidden);
     cacheResult(key, result);
+    persistViz(key, result);
     refreshInsights();
     schedulePaint();
   } catch (error) {
@@ -742,12 +775,15 @@ function drawFolderGlyph(ctx, x, y, size, color) {
 }
 
 const NESTED_CHILD_LIMIT = 80;
-const NESTED_MIN_SHARE = 0.2;
 const NESTED_START_OPACITY = 0.75;
 const NESTED_OPACITY_STEP = 0.05;
 const NESTED_MIN_OPACITY = 0.25;
 const NESTED_MAX_DEPTH = 12;
 const NESTED_CELL_BUDGET = 6000;
+
+function nestedShare() {
+  return Math.min(50, Math.max(1, state.nestedShare || 1)) / 100;
+}
 
 function nestedChildren(node) {
   let children = (node.children || []).filter((child) => child.size > 0);
@@ -769,7 +805,8 @@ function nestedChildren(node) {
   return children;
 }
 
-// Draws one nested level, descending only into folders that take more than a fifth of this section.
+// Draws one nested level, descending only into folders that take more than the
+// configured share of this section.
 function drawNested(ctx, node, x, y, w, h, depth, hovered, budget) {
   const opacity = NESTED_START_OPACITY - (depth - 2) * NESTED_OPACITY_STEP;
   if (depth > NESTED_MAX_DEPTH || opacity < NESTED_MIN_OPACITY - 1e-6) return;
@@ -778,7 +815,7 @@ function drawNested(ctx, node, x, y, w, h, depth, hovered, budget) {
 
   const cells = [];
   layoutTreemap(children, x, y, w, h, cells);
-  const minShare = node.size * NESTED_MIN_SHARE;
+  const minShare = node.size * nestedShare();
 
   ctx.save();
   ctx.beginPath();
@@ -941,7 +978,7 @@ function paint() {
       w >= 60 &&
       h >= 54 &&
       sectionSize > 0 &&
-      node.size > sectionSize * NESTED_MIN_SHARE;
+      node.size > sectionSize * nestedShare();
     if (showContents) drawFolderContents(ctx, node, x, y, w, h, hovered);
 
     trace();

@@ -17,6 +17,7 @@ mod threemf;
 mod thumbs;
 mod update;
 mod viz;
+mod vizcache;
 
 use serde::Serialize;
 use std::borrow::Cow;
@@ -179,45 +180,97 @@ fn take_launch_path(state: tauri::State<'_, AppState>) -> Option<String> {
         .and_then(|mut pending| pending.take())
 }
 
+#[cfg(windows)]
+const EXPLORER_MENU_FOLDER_KEY: &str = r"HKCU\Software\Classes\Directory\shell\AltFileExplore";
+#[cfg(windows)]
+const EXPLORER_MENU_BACKDROP_KEY: &str =
+    r"HKCU\Software\Classes\Directory\Background\shell\AltFileExplore";
+
+#[cfg(windows)]
+fn reg_success(args: &[&str]) -> Result<bool, String> {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("reg")
+        .args(args)
+        .creation_flags(0x0800_0000)
+        .status()
+        .map(|status| status.success())
+        .map_err(|error| format!("Could not run reg.exe: {error}"))
+}
+
+#[cfg(windows)]
+fn explorer_menu_registered() -> Result<bool, String> {
+    let folder = format!("{EXPLORER_MENU_FOLDER_KEY}\\command");
+    let backdrop = format!("{EXPLORER_MENU_BACKDROP_KEY}\\command");
+    Ok(reg_success(&["query", &folder, "/ve"])? || reg_success(&["query", &backdrop, "/ve"])?)
+}
+
 #[tauri::command]
 fn install_explorer_menu() -> Result<String, String> {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        use std::process::Command;
-
         const LABEL: &str = "Explore in AltFile";
-        const VERB_KEY: &str = r"HKCU\Software\Classes\Directory\shell\AltFileExplore";
 
         let exe = std::env::current_exe()
             .map_err(|error| format!("Could not locate the app executable: {error}"))?;
         let exe = exe.display().to_string();
-        let icon = format!("\"{exe}\"");
-        let command = format!("\"{exe}\" --path \"%1\"");
-        let command_key = format!("{VERB_KEY}\\command");
+        let folder_command = format!("\"{exe}\" --path \"%1\"");
+        let backdrop_command = format!("\"{exe}\" --path \"%V\"");
 
         let add = |args: &[&str]| -> Result<(), String> {
-            let status = Command::new("reg")
-                .args(args)
-                .creation_flags(0x0800_0000)
-                .status()
-                .map_err(|error| format!("Could not run reg.exe: {error}"))?;
-            if status.success() {
+            if reg_success(args)? {
                 Ok(())
             } else {
-                Err(format!("reg.exe failed with status {status}"))
+                Err("reg.exe could not write the File Explorer menu".to_string())
             }
         };
 
-        add(&["add", VERB_KEY, "/ve", "/d", LABEL, "/f"])?;
-        add(&["add", VERB_KEY, "/v", "Icon", "/d", &icon, "/f"])?;
-        add(&["add", &command_key, "/ve", "/d", &command, "/f"])?;
+        for (verb_key, command) in [
+            (EXPLORER_MENU_FOLDER_KEY, folder_command.as_str()),
+            (EXPLORER_MENU_BACKDROP_KEY, backdrop_command.as_str()),
+        ] {
+            let command_key = format!("{verb_key}\\command");
+            add(&["add", verb_key, "/ve", "/d", LABEL, "/f"])?;
+            add(&["add", verb_key, "/v", "Icon", "/d", &exe, "/f"])?;
+            add(&["add", verb_key, "/v", "Position", "/d", "Top", "/f"])?;
+            add(&["add", &command_key, "/ve", "/d", command, "/f"])?;
+        }
 
         Ok(LABEL.to_string())
     }
     #[cfg(not(windows))]
     {
         Err("File Explorer integration is only available on Windows".to_string())
+    }
+}
+
+#[tauri::command]
+fn uninstall_explorer_menu() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        for key in [EXPLORER_MENU_FOLDER_KEY, EXPLORER_MENU_BACKDROP_KEY] {
+            reg_success(&["delete", key, "/f"])?;
+        }
+        if explorer_menu_registered()? {
+            Err("The File Explorer menu entries could not be removed".to_string())
+        } else {
+            Ok(())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Err("File Explorer integration is only available on Windows".to_string())
+    }
+}
+
+#[tauri::command]
+fn explorer_menu_status() -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        explorer_menu_registered()
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
     }
 }
 
@@ -361,12 +414,16 @@ pub fn run() {
             viz::viz_scan,
             viz::cancel_scan,
             viz::viz_watch,
+            vizcache::viz_cache_get,
+            vizcache::viz_cache_put,
             search::search_files,
             settings::load_settings,
             settings::save_settings,
             take_launch_path,
             open_window_menu,
             install_explorer_menu,
+            uninstall_explorer_menu,
+            explorer_menu_status,
             update::install_update
         ])
         .run(tauri::generate_context!())

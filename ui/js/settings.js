@@ -6,7 +6,7 @@ import { applyThemeHue, esc, humanSize, humanCount, clamp, debounce } from './ut
 import { renderFiles } from './files.js';
 import { setModelSpin } from './model.js';
 import { setLoop, setActiveSoundFont, soundfontLabel } from './player.js';
-import { renderViz } from './viz.js';
+import { renderViz, refreshViz } from './viz.js';
 import { checkForUpdates, installUpdate, onUpdate, updateInfo } from './updates.js';
 
 const SHORTCUTS = [
@@ -132,6 +132,20 @@ function settingsHtml() {
     </div>
 
     <div class="settings-group">
+      <div class="settings-group-title">Visualization</div>
+      <div class="setting-row">
+        <div class="setting-main">
+          <div class="setting-label">Treemap depth threshold</div>
+          <div class="setting-desc">Inside the treemap, a folder's contents are drawn one level deeper while the folder takes more than this share of its section. Lower values reveal more levels; higher values keep the map calmer.</div>
+        </div>
+        <div class="setting-control">
+          <input class="range" id="settings-nested-share" type="range" min="1" max="50" step="1" value="${state.nestedShare}">
+          <span id="settings-nested-value" class="nav-meta">${state.nestedShare}%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-group">
       <div class="settings-group-title">Playback</div>
       <div class="setting-row">
         <div class="setting-main">
@@ -189,7 +203,7 @@ function settingsHtml() {
       <div class="setting-row">
         <div class="setting-main">
           <div class="setting-label">File Explorer context menu</div>
-          <div class="setting-desc">Adds <strong>Explore in AltFile</strong> to the right-click menu for folders. It opens AltFile at that folder, or focuses the open window and navigates it there.</div>
+          <div class="setting-desc">Adds <strong>Explore in AltFile</strong> to the right-click menu for folders and folder backgrounds. It opens AltFile at that folder, or focuses the open window and navigates it there. Windows 11 keeps these entries in the classic menu: press Shift+F10 (or the Menu key), or choose <strong>Show more options</strong>. The button removes them again once they are installed.</div>
         </div>
         <div class="setting-control">
           <button class="mini-btn" id="settings-install-menu" type="button">${icon('external', 12)} Add AltFile Context Menu Items</button>
@@ -311,6 +325,22 @@ export function openSettings() {
     rerender();
   });
 
+  const refreshVizSoon = debounce(() => {
+    if (activeTab()?.view === 'viz') refreshViz();
+  }, 350);
+
+  const shareRange = body.querySelector('#settings-nested-share');
+  const shareValue = body.querySelector('#settings-nested-value');
+  shareRange?.addEventListener('input', () => {
+    const value = clamp(Math.round(Number(shareRange.value) || 1), 1, 50);
+    state.nestedShare = value;
+    if (shareValue) shareValue.textContent = `${value}%`;
+    scheduleSave();
+    state.viz.cache.clear();
+    rerenderViz();
+    refreshVizSoon();
+  });
+
   body.querySelector('#settings-preview')?.addEventListener('change', (event) => {
     state.preview.open = event.target.checked;
     scheduleSave();
@@ -376,19 +406,47 @@ export function openSettings() {
     }
   });
 
-  body.querySelector('#settings-install-menu')?.addEventListener('click', async (event) => {
+  const menuButton = body.querySelector('#settings-install-menu');
+  let menuInstalled = false;
+  const paintMenuButton = () => {
+    if (!menuButton) return;
+    menuButton.innerHTML = menuInstalled
+      ? `${icon('trash', 12)} Remove AltFile Context Menu Items`
+      : `${icon('external', 12)} Add AltFile Context Menu Items`;
+  };
+  const refreshMenuButton = async () => {
+    if (!menuButton) return;
+    try {
+      menuInstalled = await api.explorerMenuStatus();
+    } catch {
+      menuInstalled = false;
+    }
+    paintMenuButton();
+  };
+
+  menuButton?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
     try {
-      const label = await api.installExplorerMenu();
-      toast(`Added "${label}" to the File Explorer folder menu`, { type: 'success', icon: 'check' });
+      if (menuInstalled) {
+        await api.uninstallExplorerMenu();
+        menuInstalled = false;
+        toast('Removed the AltFile context menu entries', { type: 'success', icon: 'check' });
+      } else {
+        const label = await api.installExplorerMenu();
+        menuInstalled = true;
+        toast(`Added "${label}" to the folder menu (Windows 11: under "Show more options")`, { type: 'success', icon: 'check' });
+      }
     } catch (error) {
       toast(String(error), { type: 'error' });
+      await refreshMenuButton();
     } finally {
       button.disabled = false;
+      paintMenuButton();
     }
   });
 
   updateCacheLine();
+  refreshMenuButton();
   return modal;
 }
