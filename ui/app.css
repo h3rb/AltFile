@@ -1382,25 +1382,58 @@ body.panning * {
   color: var(--kind-color, rgb(var(--accent-rgb)));
 }
 
+.folder-clip-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
 .folder-tile::before {
   content: "";
   position: absolute;
-  inset: 0;
-  background: radial-gradient(120px 80px at 50% 34%, var(--kind-glow, rgba(var(--accent-rgb), 0.12)), transparent 72%);
+  inset: 1.2%;
+  clip-path: url(#folder-frame-clip);
+  background: radial-gradient(closest-side at 50% 57%, transparent 38%, var(--kind-glow, rgba(var(--accent-rgb), 0.12)) 100%);
 }
 
-.folder-shape {
-  position: relative;
-  width: 88%;
-  height: 88%;
-  opacity: 0.88;
-  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.4));
+.folder-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  opacity: 0.85;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.35));
+}
+
+.folder-frame path {
+  vector-effect: non-scaling-stroke;
+}
+
+.folder-frame .frame-shadow {
+  stroke: rgba(4, 8, 12, 0.55);
+  stroke-width: 3px;
+}
+
+.folder-frame .frame-line {
+  stroke: currentColor;
+  stroke-width: 1.5px;
+}
+
+.folder-fill {
+  position: absolute;
+  inset: 1.2%;
+  clip-path: url(#folder-frame-clip);
+  background: rgba(var(--accent-rgb), 0.05);
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  pointer-events: none;
 }
 
 .folder-counts {
   position: absolute;
   left: 50%;
-  top: 63%;
+  top: 58%;
   transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
@@ -1475,9 +1508,10 @@ body.panning * {
 
 .folder-mosaic {
   position: absolute;
-  inset: 0;
+  inset: 1.2%;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: 0;
+  clip-path: url(#folder-frame-clip);
 }
 
 .folder-mosaic[hidden] {
@@ -1499,7 +1533,6 @@ body.panning * {
   background: #0b0f14;
 }
 
-.folder-tile.has-mosaic .folder-shape,
 .folder-tile.has-mosaic .folder-counts,
 .folder-tile.has-mosaic::before {
   display: none;

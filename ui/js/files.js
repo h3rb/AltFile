@@ -380,8 +380,9 @@ function folderTileHtml(entry) {
   const color = kindColor(entry.kind);
   return `
         <div class="folder-tile" data-count-path="${esc(entry.path)}" data-count-mtime="${entry.modified || 0}" data-size-path="${esc(entry.path)}" data-size-mtime="${entry.modified || 0}" data-media-path="${esc(entry.path)}" data-media-mtime="${entry.modified || 0}" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">
-          <svg class="folder-shape" viewBox="3 5 18 15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <div class="folder-fill" aria-hidden="true"></div>
           <div class="folder-mosaic" hidden></div>
+          <svg class="folder-frame" viewBox="2.8 4.8 18.4 15.4" preserveAspectRatio="none" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="frame-shadow" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path class="frame-line" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
           <div class="folder-counts" hidden>
             <span class="count-row">
               <span class="folder-count" data-role="folders">${icon('folder', 14)}<span class="count-value">0</span></span>
@@ -1472,13 +1473,16 @@ export function folderMosaicFor(entry, limit = MOSAIC_GRID_TILES) {
 function applyMosaic(el, data) {
   const holder = el.querySelector('.folder-mosaic');
   if (!holder || !el.isConnected) return;
-  const width = el.clientWidth;
-  const height = el.clientHeight;
-  if (!width || !height) return;
+  holder.hidden = false;
+  const width = holder.clientWidth;
+  const height = holder.clientHeight;
+  if (!width || !height) {
+    holder.hidden = true;
+    return;
+  }
   const tiles = packMosaic(data.items, width, height, { maxTiles: MOSAIC_GRID_TILES, gap: 2 });
   if (!tiles.length) return;
   holder.innerHTML = mosaicHtml(tiles, width, height);
-  holder.hidden = false;
   el.classList.add('has-mosaic');
   el.title = `${humanCount(data.media)} of ${humanCount(data.files)} files are images or videos`;
 }
