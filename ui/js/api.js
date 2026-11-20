@@ -41,6 +41,8 @@ export const api = {
   listDir: (path, showHidden) => invoke('list_dir', { path, showHidden }),
   folderCounts: (path, showHidden) => invoke('folder_counts', { path, showHidden }),
   folderSize: (path, showHidden) => invoke('folder_size', { path, showHidden }),
+  folderMedia: (path, showHidden, sort, limit) =>
+    invoke('folder_media', { path, showHidden, sort, limit }),
   openPath: (path) => invoke('open_path', { path }),
   openUrl: (url) => invoke('open_url', { url }),
   revealPath: (path) => invoke('reveal_path', { path }),
@@ -74,6 +76,8 @@ export const api = {
     invoke('filter_names', { names, query, wildcards, regex }),
   loadSettings: () => invoke('load_settings'),
   saveSettings: (settings) => invoke('save_settings', { settings }),
+  saveFileDialog: (options) => invoke('plugin:dialog|save', { options }),
+  savePng: (path, data) => invoke('save_png', { path, data }),
   takeLaunchPath: () => invoke('take_launch_path'),
   openWindowMenu: () => invoke('open_window_menu'),
   installExplorerMenu: () => invoke('install_explorer_menu'),

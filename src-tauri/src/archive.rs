@@ -113,6 +113,7 @@ struct Collector {
     entries: usize,
     truncated: bool,
     locked: bool,
+    has_exe: bool,
 }
 
 impl Collector {
@@ -130,7 +131,11 @@ impl Collector {
         } else {
             self.files += 1;
             self.bytes = self.bytes.saturating_add(size);
-            if let Some(bucket) = kind_bucket(&paths::ext_of(&name)) {
+            let ext = paths::ext_of(&name);
+            if ext == "exe" {
+                self.has_exe = true;
+            }
+            if let Some(bucket) = kind_bucket(&ext) {
                 self.votes[bucket] += 1;
             }
         }
@@ -147,6 +152,9 @@ impl Collector {
     fn guess_kind(&self) -> &'static str {
         if self.files == 0 {
             return if self.folders.is_empty() { "Empty" } else { "Folder Tree" };
+        }
+        if self.has_exe {
+            return "Application";
         }
         let mut best = 0;
         for (index, &count) in self.votes.iter().enumerate() {
@@ -1297,6 +1305,25 @@ mod tests {
         assert_eq!(summary.bytes, 230);
         assert_eq!(summary.kind, "Source Code");
         assert_eq!(summary.top.len(), 4);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn any_exe_marks_archive_as_application() {
+        let path = temp_file(
+            "installer.zip",
+            &zip_bytes(&[
+                ("docs/", 0),
+                ("docs/readme.txt", 30),
+                ("docs/changelog.md", 40),
+                ("docs/notes.txt", 20),
+                ("assets/logo.png", 500),
+                ("SETUP.EXE", 4096),
+            ]),
+        );
+        let summary = summarize(&path).unwrap();
+        assert_eq!(summary.files, 5);
+        assert_eq!(summary.kind, "Application");
         let _ = fs::remove_file(path);
     }
 

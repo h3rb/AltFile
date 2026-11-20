@@ -20,6 +20,7 @@ import {
   debounce,
 } from './util.js';
 import { toast, showMenu, closeMenu, anyOverlayOpen } from './dialogs.js';
+import { completePath, looksLikePath } from './pathcomplete.js';
 import * as files from './files.js';
 import * as sidebar from './sidebar.js';
 import * as preview from './preview.js';
@@ -163,7 +164,7 @@ function refreshShortcutHints() {
   const hints = {
     'nav-back': ['Back', 'back'], 'nav-forward': ['Forward', 'forward'], 'nav-up': ['Up one folder', 'parent'],
     refresh: ['Refresh', 'refresh'], 'path-edit': ['Edit path', 'editPath'], 'new-tab': ['New tab', 'newTab'],
-    'view-grid': ['Grid view', 'grid'], 'view-list': ['List view', 'list'], 'view-viz': ['Visualize folder', 'visualize'],
+    'view-grid': ['Grid view', 'grid'], 'view-list': ['List view', 'list'], 'view-viz': ['Visualize folder — right-click for more options', 'visualize'],
     'preview-toggle': [state.preview.open ? 'Hide preview' : 'Show preview', 'preview'],
     'palette-hint': ['Command palette', 'palette'],
   };
@@ -428,8 +429,88 @@ function openPath(path) {
   api.openPath(path).catch((error) => toast(String(error), { type: 'error' }));
 }
 
+async function openTypedPath(value) {
+  const tab = activeTab();
+  let target = value.replace(/^"(.*)"$/, '$1');
+  if (/^[A-Za-z]:$/.test(target)) target = `${target}\\`;
+  if (!isPathLike(target)) target = joinPath(tab?.path || '', target);
+  try {
+    const info = await api.fileInfo(target);
+    clearQuery();
+    if (info.isDir) navigate(info.path);
+    else api.openPath(info.path).catch((error) => toast(String(error), { type: 'error' }));
+  } catch {
+    toast(`No matching path: ${target}`, { type: 'error' });
+  }
+}
+
 function visualizePath(path) {
   navigate(path, { view: 'viz' });
+}
+
+function vizTabMenuItems(path) {
+  return [
+    {
+      label: 'Visualize in New Tab',
+      icon: 'plus',
+      onClick: () => openTab(path, { view: 'viz' }),
+    },
+    {
+      label: 'Visualize each first level folder in a separate tab',
+      icon: 'chart',
+      onClick: () => visualizeSubfoldersInTabs(path),
+    },
+    {
+      label: 'Export visualization as PNG',
+      icon: 'download',
+      onClick: () => viz.exportPng(),
+    },
+  ];
+}
+
+async function visualizeSubfoldersInTabs(path) {
+  const tab = activeTab();
+  const showHidden = Boolean(tab?.showHidden);
+  let entries = null;
+  if (state.listing && samePath(state.listing.path, path)) {
+    entries = state.listing.entries;
+  } else {
+    try {
+      entries = (await api.listDir(path, showHidden)).entries;
+    } catch (error) {
+      toast(String(error), { type: 'error' });
+      return;
+    }
+  }
+  const folders = (entries || []).filter((entry) => entry.isDir);
+  if (!folders.length) {
+    toast('No subfolders to visualize', { type: 'error' });
+    return;
+  }
+
+  const previous = activeTab();
+  if (previous) {
+    const scroll = document.getElementById('files-scroll');
+    previous.scrollTop = scroll?.scrollTop || 0;
+  }
+  const extra = {
+    view: 'viz',
+    sort: tab?.sort,
+    filter: 'all',
+    showHidden,
+  };
+  const tabs = folders.map((entry) => createTab(entry.path, extra));
+  state.tabs.push(...tabs);
+  state.activeId = tabs[0].id;
+  state.searchToken += 1;
+  state.searchResults = null;
+  state.searching = false;
+  addRecent(tabs[0].path);
+  syncSearchUi();
+  renderChrome();
+  scheduleSave();
+  await files.refreshFiles();
+  viz.ensureViz();
 }
 
 function setView(view) {
@@ -1173,6 +1254,17 @@ function bindStaticEvents() {
       event.preventDefault();
       event.stopPropagation();
       endPathEdit(false);
+    } else if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      const typed = pathInput.value;
+      const tab = activeTab();
+      completePath(typed, tab?.path || '', tab?.showHidden, state.app?.home)
+        .then((next) => {
+          if (!next || !pathEditing || pathInput.value !== typed) return;
+          pathInput.value = next;
+          pathInput.setSelectionRange(next.length, next.length);
+        })
+        .catch(() => {});
     }
   });
   pathInput?.addEventListener('blur', () => {
@@ -1189,11 +1281,29 @@ function bindStaticEvents() {
       searchInput.blur();
     } else if (event.key === 'Enter') {
       event.preventDefault();
+      const typed = searchInput.value.trim();
+      if (!state.searchWildcards && !state.searchRegex && looksLikePath(typed)) {
+        openTypedPath(typed);
+        return;
+      }
       if (state.searchRecursive) runSearchNow();
       else {
         const first = state.visibleEntries[0];
         if (first) openEntry(first);
       }
+    } else if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+      && looksLikePath(searchInput.value)) {
+      event.preventDefault();
+      const typed = searchInput.value;
+      const tab = activeTab();
+      completePath(typed, tab?.path || '', tab?.showHidden, state.app?.home)
+        .then((next) => {
+          if (!next || searchInput.value !== typed) return;
+          searchInput.value = next;
+          searchInput.setSelectionRange(next.length, next.length);
+          onSearchInput();
+        })
+        .catch(() => {});
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
       searchInput.blur();
@@ -1205,6 +1315,18 @@ function bindStaticEvents() {
   for (const [view, id] of Object.entries(VIEW_BUTTONS)) {
     document.getElementById(id)?.addEventListener('click', () => setView(view));
   }
+  const vizBtn = document.getElementById('view-viz');
+  vizBtn?.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    const tab = activeTab();
+    if (!tab) return;
+    const items = vizTabMenuItems(tab.path);
+    if (event.button === -1 || (event.clientX === 0 && event.clientY === 0)) {
+      showButtonMenu(vizBtn, items);
+    } else {
+      showMenu({ x: event.clientX, y: event.clientY, items });
+    }
+  });
   document.getElementById('preview-toggle')?.addEventListener('click', togglePreview);
 
   const sortBtn = document.getElementById('sort-btn');

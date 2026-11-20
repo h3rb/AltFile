@@ -67,6 +67,14 @@ test('independent terminal and browser scopes can reuse a key', () => {
   assert.match(keys.setBinding('terminalCycle', 'Ctrl+T'), /Close terminal/);
 });
 
+test('slash stays the search shortcut and is never a terminal key', () => {
+  assert.equal(keys.commandForEvent(event('/')), 'search');
+  assert.equal(keys.commandForEvent(event('?', { shiftKey: true })), undefined);
+  assert.equal(keys.commandForEvent(event('/'), 'terminal'), undefined);
+  assert.ok(!keys.shortcutLabel('terminal').includes('/'));
+  assert.equal(keys.shortcutLabel('terminal'), '. · : · | · ` · F4');
+});
+
 test('unbinding persists and reset restores aliases', () => {
   assert.equal(keys.setBinding('terminal', null), '');
   const saved = keys.savedBindings();

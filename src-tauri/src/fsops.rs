@@ -50,6 +50,24 @@ pub struct FolderSize {
     pub truncated: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderMediaItem {
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+    pub modified: u64,
+    pub kind: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderMedia {
+    pub files: u64,
+    pub media: u64,
+    pub items: Vec<FolderMediaItem>,
+}
+
 fn modified_ms(meta: &fs::Metadata) -> u64 {
     meta.modified()
         .ok()
@@ -188,6 +206,108 @@ pub fn folder_counts(path: String, show_hidden: bool) -> Result<FolderCounts, St
         has_video,
         has_model,
     })
+}
+
+fn lower_name(item: &FolderMediaItem) -> String {
+    item.name.to_lowercase()
+}
+
+/// Lists the images and videos in `dir` when they make up more than half of its
+/// files. The caller caps the result, so the sort runs before truncation and the
+/// returned items are the folder's preferred pick for a mosaic preview.
+pub fn folder_media_list(
+    dir: &Path,
+    show_hidden: bool,
+    sort: &str,
+    limit: usize,
+) -> Result<Option<FolderMedia>, String> {
+    let read = fs::read_dir(dir).map_err(|e| paths::io_msg(&e, dir))?;
+    let mut files = 0u64;
+    let mut media: Vec<FolderMediaItem> = Vec::new();
+
+    for item in read {
+        let item = match item {
+            Ok(i) => i,
+            Err(_) => continue,
+        };
+        let name = item.file_name().to_string_lossy().into_owned();
+        let item_path = item.path();
+        let meta = match item.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if !show_hidden && paths::hidden(&name, &meta) {
+            continue;
+        }
+        let is_dir = if paths::is_reparse(&meta) {
+            fs::metadata(&item_path)
+                .map(|m| m.is_dir())
+                .unwrap_or(meta.is_dir())
+        } else {
+            meta.is_dir()
+        };
+        if is_dir {
+            continue;
+        }
+        files += 1;
+        let kind = paths::classify(&paths::ext_of(&name), false);
+        if kind != "image" && kind != "video" {
+            continue;
+        }
+        media.push(FolderMediaItem {
+            name,
+            path: paths::text(&item_path),
+            size: meta.len(),
+            modified: modified_ms(&meta),
+            kind: kind.to_string(),
+        });
+    }
+
+    let total = media.len() as u64;
+    if files == 0 || total == 0 || total * 2 <= files {
+        return Ok(None);
+    }
+
+    match sort {
+        "name" => media.sort_by(|a, b| {
+            lower_name(a)
+                .cmp(&lower_name(b))
+                .then_with(|| a.name.cmp(&b.name))
+        }),
+        "size" => media.sort_by(|a, b| {
+            b.size
+                .cmp(&a.size)
+                .then_with(|| lower_name(a).cmp(&lower_name(b)))
+        }),
+        _ => media.sort_by(|a, b| {
+            b.modified
+                .cmp(&a.modified)
+                .then_with(|| lower_name(a).cmp(&lower_name(b)))
+        }),
+    }
+    media.truncate(limit.clamp(1, 24));
+
+    Ok(Some(FolderMedia {
+        files,
+        media: total,
+        items: media,
+    }))
+}
+
+#[tauri::command]
+pub fn folder_media(
+    path: String,
+    show_hidden: bool,
+    sort: Option<String>,
+    limit: Option<u32>,
+) -> Result<Option<FolderMedia>, String> {
+    let dir = paths::resolve_dir(&path)?;
+    folder_media_list(
+        &dir,
+        show_hidden,
+        sort.as_deref().unwrap_or("modified"),
+        limit.unwrap_or(16) as usize,
+    )
 }
 
 const SIZE_ENTRY_CAP: u64 = 300_000;
@@ -974,4 +1094,85 @@ pub fn watch_directory(
         *guard = Some(watcher);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn fixture(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("altfe-media-{}-{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(dir: &Path, name: &str, bytes: usize) {
+        fs::write(dir.join(name), vec![b'x'; bytes]).unwrap();
+    }
+
+    #[test]
+    fn media_majority_lists_and_sorts() {
+        let dir = fixture("majority");
+        write(&dir, "alpha.jpg", 10);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        write(&dir, "bravo.png", 30);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        write(&dir, "charlie.mp4", 20);
+        write(&dir, "notes.txt", 5);
+        write(&dir, "readme.md", 5);
+
+        let list = folder_media_list(&dir, false, "name", 16).unwrap().unwrap();
+        assert_eq!(list.files, 5);
+        assert_eq!(list.media, 3);
+        let names: Vec<&str> = list.items.iter().map(|item| item.name.as_str()).collect();
+        assert_eq!(names, ["alpha.jpg", "bravo.png", "charlie.mp4"]);
+
+        let by_size = folder_media_list(&dir, false, "size", 16).unwrap().unwrap();
+        assert_eq!(by_size.items[0].name, "bravo.png");
+        assert_eq!(by_size.items[2].name, "alpha.jpg");
+
+        let by_date = folder_media_list(&dir, false, "modified", 16)
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_date.items[0].name, "charlie.mp4");
+        assert_eq!(by_date.items[2].name, "alpha.jpg");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn half_media_is_not_enough() {
+        let dir = fixture("half");
+        write(&dir, "photo.jpg", 10);
+        write(&dir, "notes.txt", 10);
+        assert!(folder_media_list(&dir, false, "name", 16).unwrap().is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn limit_keeps_the_total_count() {
+        let dir = fixture("limit");
+        write(&dir, "a.jpg", 1);
+        write(&dir, "b.jpg", 2);
+        write(&dir, "c.jpg", 3);
+        let list = folder_media_list(&dir, false, "size", 2).unwrap().unwrap();
+        assert_eq!(list.media, 3);
+        assert_eq!(list.items.len(), 2);
+        assert_eq!(list.items[0].name, "c.jpg");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn subfolders_do_not_dilute_the_share() {
+        let dir = fixture("subfolders");
+        write(&dir, "photo.jpg", 10);
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        let list = folder_media_list(&dir, false, "name", 16).unwrap().unwrap();
+        assert_eq!(list.files, 1);
+        assert_eq!(list.media, 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

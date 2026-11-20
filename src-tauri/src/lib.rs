@@ -1,4 +1,5 @@
 mod archive;
+mod export;
 mod extract;
 mod fonts;
 mod fsops;
@@ -348,6 +349,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_drag::init())
+        .plugin(tauri_plugin_dialog::init())
         .register_uri_scheme_protocol("thumb", serve_thumbnail)
         .register_uri_scheme_protocol("media", media::serve)
         .register_uri_scheme_protocol("font", fonts::serve)
@@ -396,6 +398,7 @@ pub fn run() {
             fsops::list_dir,
             fsops::folder_counts,
             fsops::folder_size,
+            fsops::folder_media,
             archive::archive_summary,
             extract::archive_extract,
             iso::iso_info,
@@ -429,6 +432,7 @@ pub fn run() {
             search::filter_names,
             settings::load_settings,
             settings::save_settings,
+            export::save_png,
             take_launch_path,
             open_window_menu,
             install_explorer_menu,

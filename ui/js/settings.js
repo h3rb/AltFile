@@ -9,7 +9,12 @@ import { setLoop, setActiveSoundFont, soundfontLabel } from './player.js';
 import { renderViz, refreshViz } from './viz.js';
 import { checkForUpdates, installUpdate, onUpdate, updateInfo } from './updates.js';
 
-import { COMMANDS, eventBinding, shortcutLabel, isCustomized, setBinding, resetBinding, resetBindings } from './keyboard.js';
+import { COMMANDS, eventBinding, getBindings, bindingLabel, isCustomized, setBinding, resetBinding, resetBindings } from './keyboard.js';
+
+function shortcutKeys(id) {
+  const keys = getBindings(id).map(bindingLabel);
+  return keys.length ? keys.map(key => `<span class="shortcut-key">${esc(key)}</span>`).join('') : 'Not assigned';
+}
 
 function shortcutRows() {
   return ['browser', 'terminal'].map(scope => `
@@ -17,7 +22,7 @@ function shortcutRows() {
     ${COMMANDS.filter(command => command.scope === scope && (command.id !== 'windowMenu' || state.app?.platform === 'windows')).map(command => `
       <div class="shortcut-row" data-shortcut-row="${command.id}">
         <span class="shortcut-label">${esc(command.label)}</span>
-        <button type="button" class="shortcut-binding" data-rebind="${command.id}" aria-label="Rebind ${esc(command.label)}">${esc(shortcutLabel(command.id) || 'Not assigned')}</button>
+        <button type="button" class="shortcut-binding" data-rebind="${command.id}" aria-label="Rebind ${esc(command.label)}">${shortcutKeys(command.id)}</button>
         <button type="button" class="mini-btn" data-reset-binding="${command.id}" aria-label="Reset ${esc(command.label)}" ${isCustomized(command.id) ? '' : 'disabled'}>Reset</button>
         <div class="shortcut-editor" hidden>
           <span role="status" aria-live="polite">Press a key combination. Escape cancels.</span>
@@ -182,6 +187,19 @@ function settingsHtml() {
       </div>
       <div class="setting-row">
         <div class="setting-main">
+          <div class="setting-label">Folder photo mosaics</div>
+          <div class="setting-desc">Folders where more than half of the files are images or videos show a packed mosaic of them in the grid and preview panel. Choose which files are picked first; the packing fits as many as stay readable.</div>
+        </div>
+        <div class="setting-control">
+          <select class="select" id="settings-mosaic-sort" aria-label="Folder mosaic order">
+            <option value="modified"${state.folderMediaSort === 'modified' ? ' selected' : ''}>Latest modified first</option>
+            <option value="name"${state.folderMediaSort === 'name' ? ' selected' : ''}>Alphabetical</option>
+            <option value="size"${state.folderMediaSort === 'size' ? ' selected' : ''}>Largest first</option>
+          </select>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-main">
           <div class="setting-label">Preview panel</div>
           <div class="setting-desc">Show a details panel with thumbnails, metadata and text previews.</div>
         </div>
@@ -294,6 +312,21 @@ function settingsHtml() {
       </div>
     </div>
 
+    <div class="settings-group">
+      <div class="settings-group-title">Terminal</div>
+      <div class="setting-row">
+        <div class="setting-main">
+          <div class="setting-label">Default shell</div>
+          <div class="setting-desc">New terminals start with this shell. Use the shell button in the terminal header, or its shortcut, to switch for the current session.</div>
+        </div>
+        <div class="setting-control">
+          <select class="select" id="settings-default-shell" aria-label="Default shell" disabled>
+            <option value="default">OS default</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
     ${appInfo.platform === 'windows' ? `
     <div class="settings-group">
       <div class="settings-group-title">Windows integration</div>
@@ -380,6 +413,29 @@ export function openSettings() {
   });
   stopShortcuts = initShortcutEditor(body, () => app.refreshShortcutHints?.());
 
+  const shellSelect = body.querySelector('#settings-default-shell');
+  api.terminalShells().then((options) => {
+    if (!shellSelect?.isConnected) return;
+    const shells = options.filter((option) => option.available);
+    if (!shells.length) return;
+    shellSelect.innerHTML = shells
+      .map((option) => `<option value="${esc(option.id)}">${esc(option.label)}</option>`)
+      .join('');
+    const chosen = shells.some((option) => option.id === state.defaultShell) ? state.defaultShell : 'default';
+    if (chosen !== state.defaultShell) {
+      state.defaultShell = chosen;
+      scheduleSave();
+    }
+    shellSelect.value = chosen;
+    shellSelect.disabled = false;
+  }).catch(() => {
+    if (shellSelect?.isConnected) shellSelect.disabled = false;
+  });
+  shellSelect?.addEventListener('change', () => {
+    state.defaultShell = shellSelect.value;
+    scheduleSave();
+  });
+
   body.querySelector('#settings-update-row')?.addEventListener('click', async (event) => {
     const action = event.target.closest('#settings-update-action');
     if (!action || action.disabled) return;
@@ -422,6 +478,15 @@ export function openSettings() {
     if (scroll) scroll.style.setProperty('--card-size', `${value}px`);
     scheduleSave();
     rerender();
+  });
+
+  const mosaicSort = body.querySelector('#settings-mosaic-sort');
+  mosaicSort?.addEventListener('change', () => {
+    state.folderMediaSort = ['modified', 'name', 'size'].includes(mosaicSort.value)
+      ? mosaicSort.value
+      : 'modified';
+    scheduleSave();
+    renderFiles();
   });
 
   const refreshVizSoon = debounce(() => {

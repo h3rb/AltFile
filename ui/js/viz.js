@@ -11,7 +11,7 @@ import {
   kindColor,
   themeColor,
 } from './util.js';
-import { showMenu } from './dialogs.js';
+import { showMenu, toast, dismiss } from './dialogs.js';
 import { systemMenuItem } from './systemmenu.js';
 
 const MAX_CACHED_SCANS = 12;
@@ -349,8 +349,71 @@ export async function refreshViz() {
   }
 }
 
-function crumbTrail(tabPath, resultPath) {
-  if (!tabPath || !withinPath(resultPath, tabPath)) {
+async function exportCanvas(timeoutMs = 15000) {
+  const deadline = performance.now() + timeoutMs;
+  for (;;) {
+    if (state.viz.error) return null;
+    const canvas = document.querySelector('#viz-pane .viz-canvas');
+    if (canvas && canvas.width > 8 && canvas.height > 8 && !state.viz.loading) return canvas;
+    if (performance.now() > deadline) return null;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+}
+
+export async function exportPng() {
+  const tab = activeTab();
+  if (!tab) return;
+  const waiting = tab.view !== 'viz' || state.viz.loading || !document.querySelector('#viz-pane .viz-canvas');
+  const busy = waiting ? toast('Preparing the visualization…', { type: 'busy', id: 'viz-export', timeout: 0 }) : null;
+  try {
+    if (tab.view !== 'viz') app.setView?.('viz');
+    const canvas = await exportCanvas();
+    if (!canvas) {
+      toast('The visualization could not be exported', { type: 'error' });
+      return;
+    }
+
+    hoverPath = null;
+    hideTooltip();
+    paint();
+    const out = document.createElement('canvas');
+    out.width = canvas.width;
+    out.height = canvas.height;
+    const ctx = out.getContext('2d');
+    const pane = document.getElementById('viz-pane');
+    ctx.fillStyle = (pane && getComputedStyle(pane).backgroundColor) || '#080a0e';
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.drawImage(canvas, 0, 0);
+
+    const folder = String(tab.path || '').replace(/[\\/]+$/, '');
+    const label = (basename(tab.path) || 'visualization').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-');
+    const sep = app?.sep || '/';
+    const target = await api
+      .saveFileDialog({
+        title: 'Export visualization as PNG',
+        defaultPath: folder ? `${folder}${sep}${label}-treemap.png` : `${label}-treemap.png`,
+        filters: [{ name: 'PNG image', extensions: ['png'] }],
+      })
+      .catch((error) => {
+        toast(String(error), { type: 'error' });
+        return null;
+      });
+    if (!target) return;
+
+    await api.savePng(target, out.toDataURL('image/png').split(',')[1]);
+    toast(`Saved ${basename(target) || target}`, {
+      type: 'success',
+      icon: 'image',
+      action: { label: 'Show', onClick: () => api.revealPath(target) },
+    });
+  } catch (error) {
+    toast(String(error), { type: 'error' });
+  } finally {
+    if (busy) dismiss(busy);
+  }
+}
+
+function crumbTrail(tabPath, resultPath) {  if (!tabPath || !withinPath(resultPath, tabPath)) {
     return [{ path: resultPath, name: basename(resultPath) || resultPath }];
   }
   const base = tabPath.replace(/[\\/]+$/, '');

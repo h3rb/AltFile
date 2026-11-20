@@ -1,6 +1,15 @@
 import { api, mediaUrl, gifUrl } from './api.js';
 import { state, app } from './state.js';
-import { selectedEntries, focusedEntry, wantsThumb, isGifEntry, archiveSupported, archiveSummaryFor } from './files.js';
+import {
+  selectedEntries,
+  focusedEntry,
+  wantsThumb,
+  isGifEntry,
+  archiveSupported,
+  archiveSummaryFor,
+  folderMosaicFor,
+} from './files.js';
+import { packMosaic, mosaicHtml } from './mosaic.js';
 import { icon, kindIcon } from './icons.js';
 import { playEntry, addToPlaylist, onPlayback, seekPlayback, isLooping, setLoop, setActiveSoundFont, soundfontLabel } from './player.js';
 import { fontTileHtml, observeFontTiles } from './fonts.js';
@@ -235,8 +244,20 @@ function soundfontMediaHtml(entry) {
     </div>`;
 }
 
-function mediaHtml(entry, thumb, info, archive) {
+function folderMosaicPreviewHtml(mosaic) {
+  return `
+    <div class="preview-media folder-mosaic-preview">
+      <div class="folder-mosaic-fill" data-folder-mosaic></div>
+      <span class="thumb-badge">${icon('image', 9)} ${humanCount(mosaic.media)} images &amp; videos</span>
+    </div>`;
+}
+
+function mediaHtml(entry, thumb, info, archive, mosaic) {
   if (archive) return archivePreviewHtml(archive);
+  if (info.isDir) {
+    if (mosaic && mosaic.items.length) return folderMosaicPreviewHtml(mosaic);
+    return `<div class="preview-media">${kindTile(entry)}</div>`;
+  }
   if (info.kind === 'audio') return audioMediaHtml(entry, info);
   if (info.kind === 'video') return videoMediaHtml(entry, info, thumb);
   if (isSoundfontEntry(entry)) return soundfontMediaHtml(entry);
@@ -253,6 +274,17 @@ function mediaHtml(entry, thumb, info, archive) {
       </div>`;
   }
   return `<div class="preview-media">${kindTile(entry)}</div>`;
+}
+
+function wireFolderMosaic(body, mosaic) {
+  const holder = body.querySelector('[data-folder-mosaic]');
+  if (!holder || !mosaic || !mosaic.items.length) return;
+  const width = holder.clientWidth;
+  const height = holder.clientHeight;
+  if (!width || !height) return;
+  const tiles = packMosaic(mosaic.items, width, height, { maxTiles: 16, gap: 3 });
+  if (!tiles.length) return;
+  holder.innerHTML = mosaicHtml(tiles, width, height);
 }
 
 function wireGifPreview(img) {
@@ -272,7 +304,7 @@ function wireGifPreview(img) {
   });
 }
 
-function subjectHtml(entry, info, thumb, text, archive) {
+function subjectHtml(entry, info, thumb, text, archive, mosaic) {
   const isText = !info.isDir && isTextEntry(entry);
   const showMedia = info.isDir || !isText;
   const sizeLabel = info.isDir
@@ -329,7 +361,7 @@ function subjectHtml(entry, info, thumb, text, archive) {
   }
 
   return `
-    ${showMedia ? mediaHtml(entry, thumb, info, archive) : ''}
+    ${showMedia ? mediaHtml(entry, thumb, info, archive, mosaic) : ''}
     <div class="preview-title">${esc(info.name || entry.name)}</div>
     <div class="preview-sub">${esc(dirname(info.path) || info.path)}</div>
     ${textBlock}
@@ -708,7 +740,11 @@ export function renderPreview() {
       const archive = archiveSupported(entry) ? await archiveSummaryFor(entry) : null;
       if (token !== state.preview.token) return;
 
-      body.innerHTML = subjectHtml(entry, info, thumb, text, archive);
+      const mosaic = info.isDir ? await folderMosaicFor(entry, 16) : null;
+      if (token !== state.preview.token) return;
+
+      body.innerHTML = subjectHtml(entry, info, thumb, text, archive, mosaic);
+      wireFolderMosaic(body, mosaic);
       observeFontTiles(body);
       const media = body.querySelector('.preview-media img');
       if (media) {

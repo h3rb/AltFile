@@ -849,9 +849,22 @@ mark {
   white-space: nowrap;
 }
 
+.chip[hidden] {
+  display: none;
+}
+
 .chip:hover {
   border-color: var(--border);
   color: var(--text);
+}
+
+.chips.compact .chip {
+  gap: 4px;
+  padding: 0 7px;
+}
+
+.chips.compact .chip-label {
+  display: none;
 }
 
 .chip.active {
@@ -1458,6 +1471,38 @@ body.panning * {
   display: block;
   width: clamp(12px, calc(var(--card-size, 176px) * 0.075), 18px);
   height: auto;
+}
+
+.folder-mosaic {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.folder-mosaic[hidden] {
+  display: none;
+}
+
+.card-thumb .folder-tile .folder-mosaic img,
+.folder-mosaic-fill img {
+  position: absolute;
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  object-fit: cover;
+  opacity: 1;
+  transform: none;
+  border-radius: 3px;
+  background: #0b0f14;
+}
+
+.folder-tile.has-mosaic .folder-shape,
+.folder-tile.has-mosaic .folder-counts,
+.folder-tile.has-mosaic::before {
+  display: none;
 }
 
 .iso-tile {
@@ -2298,6 +2343,23 @@ body.panning * {
 .preview-media .thumb-badge {
   left: 10px;
   bottom: 10px;
+}
+
+.folder-mosaic-preview {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  min-height: 0;
+  max-height: none;
+}
+
+.folder-mosaic-fill {
+  position: absolute;
+  inset: 0;
+}
+
+.folder-mosaic-preview .thumb-badge {
+  z-index: 2;
 }
 
 .model-preview {
@@ -3591,6 +3653,21 @@ body.panning * {
   accent-color: var(--accent);
 }
 
+.setting-control .select {
+  min-width: 142px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+}
+
+.setting-control .select:disabled {
+  opacity: 0.6;
+}
+
 .range {
   width: 138px;
   accent-color: var(--accent);
@@ -3692,6 +3769,16 @@ body.panning * {
   font: 10px var(--font-mono);
   cursor: pointer;
   overflow-wrap: anywhere;
+}
+
+.shortcut-key {
+  display: inline-block;
+  margin: 1px 3px 1px 0;
+  padding: 1px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: rgba(var(--accent-rgb), 0.07);
+  color: var(--text);
 }
 
 .shortcut-binding:hover,

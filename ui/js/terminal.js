@@ -195,7 +195,8 @@ export async function openTerminal() {
   if (opening !== generation || pane().hidden) return;
   if (state.app?.platform !== 'windows') shellOptions = shellOptions.filter(s => s.available);
   startPath = path;
-  shellIndex = 0;
+  const preferred = shellOptions.findIndex(option => option.id === state.defaultShell && option.available);
+  shellIndex = preferred >= 0 ? preferred : 0;
   terminal = new Terminal({
     fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim(),
     fontSize: 13,

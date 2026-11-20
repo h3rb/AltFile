@@ -7,6 +7,8 @@ import { soundfontTileHtml, observeSoundfontTiles } from './sf2.js';
 import { pageTileHtml, observePageTiles } from './pages.js';
 import { detailCellHtml, observeDetails } from './details.js';
 import { cachedWave, fallbackPeaks, loadWave, drawWaveform } from './waveform.js';
+import { packMosaic, mosaicHtml } from './mosaic.js';
+import { visibleChips } from './chipfit.js';
 import {
   esc,
   basename,
@@ -87,6 +89,16 @@ const MAX_ARCHIVE_CACHE = 4000;
 const MAX_ARCHIVE_REQUESTS = 2;
 let archiveActive = 0;
 let archiveObserver = null;
+
+const MOSAIC_THUMB_SIZE = 256;
+const MOSAIC_GRID_TILES = 8;
+const MAX_MOSAIC_CACHE = 400;
+const MAX_MOSAIC_REQUESTS = 2;
+
+const mosaicCache = new Map();
+const mosaicQueue = [];
+let mosaicActive = 0;
+let mosaicObserver = null;
 
 const isoCache = new Map();
 const isoQueue = [];
@@ -367,8 +379,9 @@ function badgeHtml(entry) {
 function folderTileHtml(entry) {
   const color = kindColor(entry.kind);
   return `
-        <div class="folder-tile" data-count-path="${esc(entry.path)}" data-count-mtime="${entry.modified || 0}" data-size-path="${esc(entry.path)}" data-size-mtime="${entry.modified || 0}" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">
+        <div class="folder-tile" data-count-path="${esc(entry.path)}" data-count-mtime="${entry.modified || 0}" data-size-path="${esc(entry.path)}" data-size-mtime="${entry.modified || 0}" data-media-path="${esc(entry.path)}" data-media-mtime="${entry.modified || 0}" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">
           <svg class="folder-shape" viewBox="3 5 18 15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <div class="folder-mosaic" hidden></div>
           <div class="folder-counts" hidden>
             <span class="count-row">
               <span class="folder-count" data-role="folders">${icon('folder', 14)}<span class="count-value">0</span></span>
@@ -538,17 +551,40 @@ export function renderFilters() {
       if (matchesFilter(entry, filter.id)) counts.set(filter.id, (counts.get(filter.id) || 0) + 1);
     }
   }
-  root.innerHTML = FILTERS.map((filter) => {
-    const active = tab.filter === filter.id;
-    const count = filter.id === 'all' ? base.length : counts.get(filter.id) || 0;
-    const showCount = count > 0 || filter.id === 'all';
-    return `
-      <button class="chip${active ? ' active' : ''}${filter.smart ? ' smart' : ''}" type="button" data-filter="${filter.id}" title="${esc(filter.label)}">
-        ${filter.smart ? icon(filter.icon, 12) : ''}
-        <span>${esc(filter.label)}</span>
+  root.innerHTML = visibleChips(FILTERS, counts, tab.filter)
+    .map((filter) => {
+      const active = tab.filter === filter.id;
+      const count = filter.id === 'all' ? base.length : counts.get(filter.id) || 0;
+      const showCount = count > 0 || filter.id === 'all';
+      const pinned = filter.id === 'all' || filter.smart || active;
+      return `
+      <button class="chip${active ? ' active' : ''}${filter.smart ? ' smart' : ''}" type="button" data-filter="${filter.id}"${pinned ? ' data-pinned="true"' : ''} title="${esc(filter.label)}">
+        ${icon(filter.icon, 12)}
+        <span class="chip-label">${esc(filter.label)}</span>
         ${showCount ? `<span class="count">${humanCount(count)}</span>` : ''}
       </button>`;
-  }).join('');
+    })
+    .join('');
+  layoutChips(root);
+}
+
+function layoutChips(root) {
+  const chipsRoot = root || document.getElementById('chips');
+  if (!chipsRoot) return;
+  const buttons = [...chipsRoot.querySelectorAll('.chip')];
+  chipsRoot.classList.remove('compact');
+  for (const button of buttons) button.hidden = false;
+  if (!chipsRoot.clientWidth) return;
+
+  const fits = () => chipsRoot.scrollWidth <= chipsRoot.clientWidth + 1;
+  if (fits()) return;
+  chipsRoot.classList.add('compact');
+  if (fits()) return;
+  for (let i = buttons.length - 1; i >= 0 && !fits(); i -= 1) {
+    const button = buttons[i];
+    if (button.dataset.pinned === 'true') continue;
+    button.hidden = true;
+  }
 }
 
 export function renderPaneState({ iconName = 'info', title = '', text = '', actions = [], skeleton = false }) {
@@ -680,6 +716,7 @@ export function renderFiles() {
 
   observeThumbs();
   observeCounts();
+  observeFolderMedia();
   observeArchives();
   observeIso();
   observeFontTiles();
@@ -1371,6 +1408,115 @@ function observeSizes() {
   targets.forEach((target) => sizeObserver.observe(target));
 }
 
+function mosaicInfo(entry, limit) {
+  const showHidden = Boolean(activeTab()?.showHidden);
+  const sort = state.folderMediaSort;
+  const key = `${entry.path.toLowerCase()}|${entry.modified || 0}|${showHidden ? 1 : 0}|${sort}|${limit}`;
+  let pending = mosaicCache.get(key);
+  if (!pending) {
+    pending = enqueueMosaic(() =>
+      api
+        .folderMedia(entry.path, showHidden, sort, limit)
+        .then(async (info) => {
+          if (!info || !Array.isArray(info.items) || !info.items.length) return null;
+          const thumbs = [];
+          for (let index = 0; index < info.items.length; index += 3) {
+            const batch = info.items.slice(index, index + 3);
+            const loaded = await Promise.all(
+              batch.map((item) => api.thumbnail(item.path, MOSAIC_THUMB_SIZE).catch(() => null))
+            );
+            batch.forEach((item, position) => {
+              const thumb = loaded[position];
+              if (!thumb || !thumb.url || !thumb.width || !thumb.height) return;
+              thumbs.push({ ...item, url: thumb.url, width: thumb.width, height: thumb.height });
+            });
+          }
+          return thumbs.length ? { files: info.files, media: info.media, items: thumbs } : null;
+        })
+        .catch(() => null)
+    );
+    mosaicCache.set(key, pending);
+    if (mosaicCache.size > MAX_MOSAIC_CACHE) {
+      const oldest = mosaicCache.keys().next().value;
+      if (oldest !== undefined) mosaicCache.delete(oldest);
+    }
+  }
+  return pending;
+}
+
+function enqueueMosaic(job) {
+  return new Promise((resolve) => {
+    mosaicQueue.push({ job, resolve });
+    pumpMosaics();
+  });
+}
+
+function pumpMosaics() {
+  while (mosaicActive < MAX_MOSAIC_REQUESTS && mosaicQueue.length) {
+    const { job, resolve } = mosaicQueue.shift();
+    mosaicActive += 1;
+    job()
+      .then(resolve, () => resolve(null))
+      .finally(() => {
+        mosaicActive -= 1;
+        pumpMosaics();
+      });
+  }
+}
+
+export function folderMosaicFor(entry, limit = MOSAIC_GRID_TILES) {
+  if (!entry?.isDir) return Promise.resolve(null);
+  return mosaicInfo(entry, limit);
+}
+
+function applyMosaic(el, data) {
+  const holder = el.querySelector('.folder-mosaic');
+  if (!holder || !el.isConnected) return;
+  const width = el.clientWidth;
+  const height = el.clientHeight;
+  if (!width || !height) return;
+  const tiles = packMosaic(data.items, width, height, { maxTiles: MOSAIC_GRID_TILES, gap: 2 });
+  if (!tiles.length) return;
+  holder.innerHTML = mosaicHtml(tiles, width, height);
+  holder.hidden = false;
+  el.classList.add('has-mosaic');
+  el.title = `${humanCount(data.media)} of ${humanCount(data.files)} files are images or videos`;
+}
+
+function loadMosaic(el) {
+  if (!el || el.dataset.mosaicLoaded === '1') return;
+  el.dataset.mosaicLoaded = '1';
+  const path = el.dataset.mediaPath;
+  if (!path) return;
+  mosaicInfo({ path, modified: Number(el.dataset.mediaMtime) || 0 }, MOSAIC_GRID_TILES).then((data) => {
+    if (data) applyMosaic(el, data);
+  });
+}
+
+function observeFolderMedia() {
+  if (mosaicObserver) mosaicObserver.disconnect();
+  const scroll = scrollEl();
+  if (!scroll) return;
+  const targets = scroll.querySelectorAll('.folder-tile[data-media-path]');
+  if (!targets.length) return;
+
+  if (!('IntersectionObserver' in window)) {
+    targets.forEach(loadMosaic);
+    return;
+  }
+  mosaicObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        mosaicObserver.unobserve(entry.target);
+        loadMosaic(entry.target);
+      }
+    },
+    { root: scroll, rootMargin: '200px 0px' }
+  );
+  targets.forEach((target) => mosaicObserver.observe(target));
+}
+
 function scrollIndexIntoView(index) {
   const scroll = scrollEl();
   if (!scroll) return;
@@ -1811,6 +1957,9 @@ export function initFiles() {
   });
   head?.addEventListener('click', onHeadClick);
   chips?.addEventListener('click', onChipsClick);
+  if (chips && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => layoutChips(chips)).observe(chips);
+  }
   pane?.addEventListener('click', (event) => {
     const actionEl = event.target.closest('[data-action]');
     if (actionEl) handleAction(actionEl.dataset.action, actionEl);

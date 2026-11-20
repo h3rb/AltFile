@@ -41,7 +41,7 @@ export const COMMANDS = [
   ['contextMenu', 'Context menu for focus', ['ContextMenu']],
   ['windowMenu', 'Window menu (Windows)', ['Alt+ContextMenu']],
   ['playPause', 'Play / pause media', ['Space']],
-  ['terminal', 'Open terminal in active folder', ['.', ':']],
+  ['terminal', 'Open terminal in active folder', ['.', ':', '|', '`', 'F4']],
   ['terminalChoose', 'Switch shell before typing', ['\\'], 'terminal'],
   ['terminalCycle', 'Switch terminal shell anytime', ['Ctrl+\\'], 'terminal'],
   ['terminalClose', 'Close terminal', ['Ctrl+Shift+W'], 'terminal'],
@@ -107,7 +107,7 @@ export function bindingLabel(binding) {
 }
 
 export function shortcutLabel(id) {
-  return getBindings(id).map(bindingLabel).join(' / ');
+  return getBindings(id).map(bindingLabel).join(' · ');
 }
 
 export function shortcutTitle(label, id) {
@@ -158,7 +158,7 @@ export function loadBindings(saved) {
   for (const { id } of COMMANDS) {
     if (!Object.hasOwn(saved, id)) continue;
     const bindings = saved[id];
-    if (Array.isArray(bindings) && bindings.length <= 3 && bindings.every(validBinding)) {
+    if (Array.isArray(bindings) && bindings.length <= 8 && bindings.every(validBinding)) {
       overrides[id] = [...new Set(bindings)];
     }
   }

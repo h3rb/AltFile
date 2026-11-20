@@ -22,12 +22,14 @@ export const state = {
   bookmarks: [],
   recent: [],
   thumbSize: 176,
+  folderMediaSort: 'modified',
   nestedShare: 1,
   searchRecursive: false,
   searchWildcards: false,
   searchRegex: false,
   searchError: null,
   filtering: false,
+  defaultShell: 'default',
   modelSpin: true,
   soundFont: null,
   themeHue: DEFAULT_HUE,
@@ -155,6 +157,9 @@ export async function loadSession() {
     if (Number.isFinite(saved.thumbSize)) {
       state.thumbSize = clamp(saved.thumbSize, 120, 260);
     }
+    if (['modified', 'name', 'size'].includes(saved.folderMediaSort)) {
+      state.folderMediaSort = saved.folderMediaSort;
+    }
     if (Number.isFinite(saved.nestedShare)) {
       state.nestedShare = clamp(Math.round(saved.nestedShare), 1, 50);
     }
@@ -162,6 +167,9 @@ export async function loadSession() {
     state.searchRecursive = saved.searchRecursive === true;
     state.searchWildcards = saved.searchWildcards === true;
     state.searchRegex = saved.searchRegex === true;
+    state.defaultShell = ['default', 'cmd', 'powershell', 'git-bash'].includes(saved.defaultShell)
+      ? saved.defaultShell
+      : 'default';
     state.modelSpin = saved.modelSpin !== false;
     state.soundFont = typeof saved.soundFont === 'string' && saved.soundFont ? saved.soundFont : null;
     state.showPlaylists = saved.showPlaylists === true;
@@ -232,10 +240,12 @@ export function captureSession() {
     bookmarks: state.bookmarks,
     recent: state.recent,
     thumbSize: state.thumbSize,
+    folderMediaSort: state.folderMediaSort,
     nestedShare: state.nestedShare,
     searchRecursive: state.searchRecursive,
     searchWildcards: state.searchWildcards,
     searchRegex: state.searchRegex,
+    defaultShell: state.defaultShell,
     modelSpin: state.modelSpin,
     soundFont: state.soundFont,
     themeHue: state.themeHue,

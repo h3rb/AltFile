@@ -41,6 +41,11 @@ treemap visualization of any folder — and it builds as a portable executable f
   marked with a folder or document icon; counts load lazily and honor the hidden-file toggle. A row of small
   icons under the counts hints at the kinds of files inside — audio, video and 3D models — with one icon per
   kind present.
+- **Media folder mosaics**: when more than half of a folder's files are images or videos, its grid card and
+  the preview pane show a packed mosaic of those thumbnails instead of the folder icon. A bin-packing layout
+  justifies rows to the container and keeps adding tiles while they stay readable; the order they are picked in
+  follows **Settings → Appearance → Folder photo mosaics** (latest modified, alphabetical, or largest first).
+  Folders at exactly half or below keep the count view.
 - **Folder content size**: the same tile shows the recursive size of the folder, and list view replaces the `—`
   in the size column with it. Sizes walk the tree lazily for visible rows with a time/entry budget, so a partial
   total is suffixed with `+` instead of blocking the view.
@@ -49,7 +54,8 @@ treemap visualization of any folder — and it builds as a portable executable f
   the `font://` protocol.
 - **Archive contents**: ZIP, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, GZ, BZ2, RAR (4 and 5) and 7Z cards list the first
   entries, the archive format, file/folder counts, and a best-guess content type (Application, Source Code,
-  Media Files, Documents, Fonts, 3D Models, Archives, or Mixed Files). ZIP indexes are read from the central
+  Media Files, Documents, Fonts, 3D Models, Archives, or Mixed Files). Any archive that contains an `.exe`
+  file is marked Application regardless of the other entries. ZIP indexes are read from the central
   directory without decompressing entry data; compressed tar streams are scanned with a 256 MB budget, and a
   partial result is marked with `+`. 7Z headers are decoded through their compressed (encoded) form without
   extracting file data. Password-protected ZIP, RAR and 7Z archives (including archives with encrypted headers)
@@ -68,7 +74,10 @@ treemap visualization of any folder — and it builds as a portable executable f
   quotes, links and images) and served through the same sandboxed `page://` frame, with raw HTML escaped
   and script URLs stripped.
 - **Treemap visualization** for the active folder: squarified tiles, drill-down, hover tooltip, large-file and
-  extension/contents insights, hidden-file support, and cancellable scans. Folder sizes are summed recursively
+  extension/contents insights, hidden-file support, and cancellable scans. Right-clicking the Visualize button
+  opens the current folder's map in a new tab, gives every first-level subfolder its own visualization tab, or
+  exports the visible map as a PNG through a save dialog.
+  Folder sizes are summed recursively
   over the whole subtree and scans have no entry cap; each scan returns one level of folder tiles, and drilling
   into a folder re-scans it. The treemap fills in progressively while the scan runs, with nested contents shown
   for any folder taking more than its depth threshold of the section (1% by default, adjustable from 1% to 50% in
@@ -240,6 +249,9 @@ the executable at compile time.
 | `Ctrl+Middle click` | Toggle list autoscroll (panning) |
 | `Ctrl+Shift+N` | New folder |
 | `Ctrl+F` or `/` | Focus search |
+| `Tab` | Complete a typed path in the path bar or search |
+| `Enter` | Open a typed path from search |
+| `.`, `:`, `\|`, `` ` ``, or `F4` | Open terminal in the active folder |
 | `Ctrl+A` | Select all |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
 | `Alt+Left` / `Alt+Right` | Back / forward |
@@ -256,7 +268,9 @@ the executable at compile time.
 
 Every command in the table (plus the terminal commands) can be rebound in **Settings → Keyboard shortcuts**:
 click a binding, press the new chord, or unbind/reset it. Text editing, dialog navigation, and mouse
-gestures keep their standard keys.
+gestures keep their standard keys. Paths typed into the path bar or search complete on `Tab` relative
+to the current folder (or from an absolute/`~` prefix, case-insensitively), and `Enter` in search
+opens a typed path instead of filtering.
 
 ## How it works
 
