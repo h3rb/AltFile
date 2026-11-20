@@ -13,6 +13,7 @@ mod render;
 mod search;
 mod settings;
 mod shellmenu;
+mod terminal;
 mod threemf;
 mod thumbs;
 mod update;
@@ -333,6 +334,12 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .manage(terminal::TerminalState::default())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                window.state::<terminal::TerminalState>().shutdown();
+            }
+        })
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Some(path) = launch_path_from(argv) {
                 forward_launch_path(app, path);
@@ -379,6 +386,8 @@ pub fn run() {
             std::thread::spawn(move || {
                 thumbs::prune(&thumb_dir, 512 * 1024 * 1024);
             });
+            #[cfg(windows)]
+            fsops::watch_drives(app.handle().clone());
 
             Ok(())
         })
@@ -417,6 +426,7 @@ pub fn run() {
             vizcache::viz_cache_get,
             vizcache::viz_cache_put,
             search::search_files,
+            search::filter_names,
             settings::load_settings,
             settings::save_settings,
             take_launch_path,
@@ -424,6 +434,12 @@ pub fn run() {
             install_explorer_menu,
             uninstall_explorer_menu,
             explorer_menu_status,
+            terminal::terminal_shells,
+            terminal::terminal_start,
+            terminal::terminal_read,
+            terminal::terminal_write,
+            terminal::terminal_resize,
+            terminal::terminal_close,
             update::install_update
         ])
         .run(tauri::generate_context!())

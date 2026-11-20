@@ -916,6 +916,59 @@ mark {
     var(--bg);
 }
 
+.terminal-pane {
+  flex: none;
+  height: clamp(180px, 32vh, 320px);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.terminal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 4px 12px;
+  background: var(--panel);
+  font-size: 11px;
+}
+
+.terminal-head > strong {
+  font-weight: 600;
+}
+
+.terminal-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.terminal-hint {
+  color: var(--dim);
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-screen {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 8px;
+  overflow: hidden;
+}
+
+.terminal-screen .xterm {
+  height: 100%;
+}
+
 .files-pane {
   position: relative;
   flex: 1;
@@ -3600,19 +3653,66 @@ body.panning * {
   word-break: break-all;
 }
 
-.shortcut-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 7px 16px;
-  padding: 10px 0;
-  color: var(--muted);
-  font-size: 10.5px;
-}
-
-.shortcut-grid span {
+.shortcut-heading {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shortcut-heading .settings-group-title {
+  margin: 0;
+}
+
+.shortcut-section {
+  margin: 16px 0 6px;
+  color: var(--dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(100px, auto) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 11px;
+}
+
+.shortcut-binding {
+  max-width: 220px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--muted);
+  font: 10px var(--font-mono);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.shortcut-binding:hover,
+.shortcut-binding:focus-visible,
+.recording .shortcut-binding {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: 1px solid var(--accent-line);
+}
+
+.shortcut-editor:not([hidden]) {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  color: var(--accent);
+}
+
+.shortcut-editor [role="status"] {
+  flex: 1;
 }
 
 .about-line {

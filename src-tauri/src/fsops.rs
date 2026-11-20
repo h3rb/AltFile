@@ -244,7 +244,13 @@ pub struct Place {
 }
 
 #[tauri::command]
-pub fn list_places(app: tauri::AppHandle) -> Vec<Place> {
+pub async fn list_places(app: tauri::AppHandle) -> Result<Vec<Place>, String> {
+    tauri::async_runtime::spawn_blocking(move || places(app))
+        .await
+        .map_err(|e| format!("Could not list drives: {e}"))
+}
+
+fn places(app: tauri::AppHandle) -> Vec<Place> {
     let resolver = app.path();
     let mut places: Vec<Place> = Vec::new();
 
@@ -290,6 +296,22 @@ pub fn list_places(app: tauri::AppHandle) -> Vec<Place> {
     }
 
     places
+}
+
+#[cfg(windows)]
+pub fn watch_drives(app: tauri::AppHandle) {
+    use windows::Win32::Storage::FileSystem::GetLogicalDrives;
+
+    let mut previous = unsafe { GetLogicalDrives() };
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        // Only poll the drive-letter mask; probing volume metadata can block on offline drives.
+        let current = unsafe { GetLogicalDrives() };
+        if current != 0 && current != previous {
+            previous = current;
+            let _ = app.emit("drives:changed", ());
+        }
+    });
 }
 
 #[cfg(windows)]

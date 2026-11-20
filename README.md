@@ -254,6 +254,10 @@ the executable at compile time.
 | `Alt+Menu` | Open the window (title bar) menu on Windows |
 | `Escape` | Clear search / selection, or close overlays |
 
+Every command in the table (plus the terminal commands) can be rebound in **Settings → Keyboard shortcuts**:
+click a binding, press the new chord, or unbind/reset it. Text editing, dialog navigation, and mouse
+gestures keep their standard keys.
+
 ## How it works
 
 - `src-tauri/src/fsops.rs` — directory listings, places/drives, previews, clipboard, copy/move/delete,

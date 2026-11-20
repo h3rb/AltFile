@@ -9,31 +9,109 @@ import { setLoop, setActiveSoundFont, soundfontLabel } from './player.js';
 import { renderViz, refreshViz } from './viz.js';
 import { checkForUpdates, installUpdate, onUpdate, updateInfo } from './updates.js';
 
-const SHORTCUTS = [
-  ['Ctrl', 'K', 'Command palette'],
-  ['Ctrl', 'L', 'Edit path'],
-  ['Ctrl', 'T', 'New tab'],
-  ['Ctrl', 'W', 'Close tab'],
-  ['Ctrl', 'P', 'Toggle preview'],
-  ['Ctrl', '1', 'Grid view'],
-  ['Ctrl', '2', 'List view'],
-  ['Ctrl', '3', 'Visualize'],
-  ['Ctrl', 'Wheel', 'Zoom grid / drift list'],
-  ['Ctrl', 'Middle', 'Toggle autoscroll'],
-  ['Ctrl', 'C', 'Copy selection'],
-  ['Ctrl', 'X', 'Cut selection'],
-  ['Ctrl', 'V', 'Paste'],
-  ['F2', '', 'Rename'],
-  ['Del', '', 'Move to Trash'],
-  ['F5', '', 'Refresh'],
-  ['Alt', '←', 'Back'],
-  ['Alt', '↑', 'Up one folder'],
-  ['/', '', 'Filter this folder'],
-  ['Esc', '', 'Clear search / selection'],
-  ['Menu', '', 'Context menu for focus'],
-  ['Ctrl', 'Menu', 'Command palette'],
-  ['Alt', 'Menu', 'Window menu'],
-];
+import { COMMANDS, eventBinding, shortcutLabel, isCustomized, setBinding, resetBinding, resetBindings } from './keyboard.js';
+
+function shortcutRows() {
+  return ['browser', 'terminal'].map(scope => `
+    <div class="shortcut-section">${scope === 'terminal' ? 'Inside the terminal' : 'While browsing'}</div>
+    ${COMMANDS.filter(command => command.scope === scope && (command.id !== 'windowMenu' || state.app?.platform === 'windows')).map(command => `
+      <div class="shortcut-row" data-shortcut-row="${command.id}">
+        <span class="shortcut-label">${esc(command.label)}</span>
+        <button type="button" class="shortcut-binding" data-rebind="${command.id}" aria-label="Rebind ${esc(command.label)}">${esc(shortcutLabel(command.id) || 'Not assigned')}</button>
+        <button type="button" class="mini-btn" data-reset-binding="${command.id}" aria-label="Reset ${esc(command.label)}" ${isCustomized(command.id) ? '' : 'disabled'}>Reset</button>
+        <div class="shortcut-editor" hidden>
+          <span role="status" aria-live="polite">Press a key combination. Escape cancels.</span>
+          <button type="button" class="mini-btn" data-disable-binding="${command.id}">Unbind</button>
+          <button type="button" class="mini-btn" data-cancel-binding="${command.id}">Cancel</button>
+        </div>
+      </div>`).join('')}`).join('');
+}
+
+function initShortcutEditor(body, onChange) {
+  const list = body.querySelector('#settings-shortcuts');
+  let editing = null;
+  const suppressedKeys = new Set();
+  const render = (focusId) => {
+    editing = null;
+    list.innerHTML = shortcutRows();
+    if (focusId) list.querySelector(`[data-rebind="${focusId}"]`)?.focus({ preventScroll: true });
+  };
+  const message = (text) => {
+    list.querySelector(`[data-shortcut-row="${editing}"] [role="status"]`).textContent = text;
+  };
+  const changed = (id) => {
+    scheduleSave();
+    onChange();
+    render(id);
+  };
+  const start = (id) => {
+    render();
+    editing = id;
+    const row = list.querySelector(`[data-shortcut-row="${id}"]`);
+    row.classList.add('recording');
+    row.querySelector('.shortcut-editor').hidden = false;
+    const button = row.querySelector('[data-rebind]');
+    button.textContent = 'Press shortcut…';
+    button.focus({ preventScroll: true });
+  };
+  list.addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    if (button.dataset.rebind) start(button.dataset.rebind);
+    if (button.dataset.cancelBinding) render(button.dataset.cancelBinding);
+    if (button.dataset.disableBinding) {
+      const id = button.dataset.disableBinding;
+      setBinding(id, null);
+      changed(id);
+    }
+    if (button.dataset.resetBinding) {
+      const id = button.dataset.resetBinding;
+      const error = resetBinding(id);
+      if (error) { start(id); message(error); }
+      else changed(id);
+    }
+  });
+  body.querySelector('#settings-reset-shortcuts').addEventListener('click', () => {
+    resetBindings();
+    changed();
+  });
+  const onKeyDown = event => {
+    if (event.repeat && suppressedKeys.has(event.code || event.key)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    if (!editing || !body.closest('.modal-backdrop')?.contains(event.target)) return;
+    if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      render(editing);
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    suppressedKeys.add(event.code || event.key);
+    if (event.repeat) return;
+    if (event.key === 'Escape' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      render(editing);
+      return;
+    }
+    const binding = eventBinding(event);
+    if (!binding) return;
+    const error = setBinding(editing, binding);
+    if (error) message(error);
+    else changed(editing);
+  };
+  const onKeyUp = event => {
+    if (!suppressedKeys.delete(event.code || event.key)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  window.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('keyup', onKeyUp, true);
+  return () => {
+    window.removeEventListener('keydown', onKeyDown, true);
+    window.removeEventListener('keyup', onKeyUp, true);
+  };
+}
 
 const rerender = debounce(() => renderFiles(), 220);
 const rerenderViz = debounce(() => {
@@ -190,6 +268,25 @@ function settingsHtml() {
       </div>
       <div class="setting-row">
         <div class="setting-main">
+          <div class="setting-label">DOS wildcard matching</div>
+          <div class="setting-desc">Match whole filenames, ignoring case: <code>*</code> matches any number of characters and <code>?</code> matches one. For example, <code>report?.txt</code>. <code>*.*</code> also includes extensionless names.</div>
+        </div>
+        <div class="setting-control">
+          <input type="checkbox" id="settings-search-wildcards"${state.searchWildcards ? ' checked' : ''}>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-main">
+          <div class="setting-label">Regular expression matching</div>
+          <div class="setting-desc">Match within filenames, ignoring case by default; use anchors for a whole name, e.g. <code>^report[0-9]+\\.txt$</code>. Look-around and backreferences are not supported.</div>
+          <div class="setting-desc">Both styles apply to filtering and subfolder searches. With both enabled, either interpretation can match; invalid regex falls back to wildcards. With neither enabled, fuzzy matching is used.</div>
+        </div>
+        <div class="setting-control">
+          <input type="checkbox" id="settings-search-regex"${state.searchRegex ? ' checked' : ''}>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-main">
           <div class="setting-label">Session restore</div>
           <div class="setting-desc">Tabs, bookmarks, recent folders and preferences are saved automatically.</div>
         </div>
@@ -226,13 +323,13 @@ function settingsHtml() {
     </div>
 
     <div class="settings-group">
-      <div class="settings-group-title">Keyboard shortcuts</div>
-      <div class="shortcut-grid">
-        ${SHORTCUTS.map(
-          ([mod, key, label]) =>
-            `<span>${mod ? `<kbd>${esc(mod)}</kbd>` : ''}${key ? `<kbd>${esc(key)}</kbd>` : ''}${esc(label)}</span>`
-        ).join('')}
+      <div class="shortcut-heading">
+        <div class="settings-group-title">Keyboard shortcuts</div>
+        <button type="button" class="mini-btn" id="settings-reset-shortcuts">Restore all defaults</button>
       </div>
+      <p class="setting-desc">Click a binding, then press its replacement. Changes save automatically and replace all keys shown for that command. Escape cancels; Tab moves focus. Text editing and dialog navigation keep their standard keys. System-reserved shortcuts may not reach the app.</p>
+      <div id="settings-shortcuts">${shortcutRows()}</div>
+      <p class="setting-desc">Mouse gestures are unchanged: Ctrl+Wheel zooms the grid / drifts the list; Ctrl+Middle toggles autoscroll.</p>
     </div>
 
     <div class="settings-group">
@@ -265,6 +362,7 @@ export function openSettings() {
     if (updateRow) updateRow.innerHTML = updateRowHtml();
   };
   const stopUpdates = onUpdate(repaintUpdateRow);
+  let stopShortcuts = () => {};
   const modal = openModal({
     headerClass: 'settings-head',
     headerHtml: `
@@ -278,8 +376,9 @@ export function openSettings() {
     body,
     width: 660,
     actions: [{ label: 'Done', kind: 'primary' }],
-    onClose: stopUpdates,
+    onClose: () => { stopUpdates(); stopShortcuts(); },
   });
+  stopShortcuts = initShortcutEditor(body, () => app.refreshShortcutHints?.());
 
   body.querySelector('#settings-update-row')?.addEventListener('click', async (event) => {
     const action = event.target.closest('#settings-update-action');
@@ -379,6 +478,12 @@ export function openSettings() {
 
   body.querySelector('#settings-search-recursive')?.addEventListener('change', (event) => {
     app.setSearchRecursive?.(event.target.checked);
+  });
+  body.querySelector('#settings-search-wildcards')?.addEventListener('change', (event) => {
+    app.setSearchPatterns?.(event.target.checked, state.searchRegex);
+  });
+  body.querySelector('#settings-search-regex')?.addEventListener('change', (event) => {
+    app.setSearchPatterns?.(state.searchWildcards, event.target.checked);
   });
 
   body.querySelector('#settings-clear-cache')?.addEventListener('click', async () => {

@@ -123,6 +123,35 @@ function initPlaylistDrop() {
     .catch(() => {});
 }
 
+export function renderDrives() {
+  const driveList = document.getElementById('drive-list');
+  if (!driveList) return;
+  const current = activePath();
+  const drives = state.places.filter((place) => place.kind === 'drive');
+  const focusedPath = driveList.contains(document.activeElement) ? document.activeElement.dataset.path : null;
+  driveList.innerHTML = drives.length
+    ? drives
+        .map((drive) => {
+          const hasSpace = Number.isFinite(drive.total) && Number.isFinite(drive.free) && drive.total > 0;
+          const used = hasSpace ? ((drive.total - drive.free) / drive.total) * 100 : null;
+          const meta = hasSpace ? `${humanSize(drive.free)} free` : '';
+          return navItem({
+            path: drive.path,
+            name: drive.name,
+            iconName: 'drive',
+            meta,
+            meter: used,
+            active: samePath(drive.path, current),
+          });
+        })
+        .join('')
+    : '<div class="nav-empty">No drives detected.</div>';
+  if (focusedPath) {
+    Array.from(driveList.querySelectorAll('[data-path]'))
+      .find((button) => samePath(button.dataset.path, focusedPath))?.focus({ preventScroll: true });
+  }
+}
+
 export function renderSidebar() {
   const quick = document.getElementById('quick-nav');
   const bookmarkList = document.getElementById('bookmark-list');
@@ -139,7 +168,6 @@ export function renderSidebar() {
   const current = activePath();
   const places = state.places || [];
   const quickPlaces = places.filter((place) => place.kind === 'quick');
-  const drives = places.filter((place) => place.kind === 'drive');
 
   if (settingsBtn) settingsBtn.innerHTML = `${icon('settings', 15)}<span>Settings</span>${updatePillHtml()}`;
   if (addBtn) addBtn.innerHTML = icon('plus', 13);
@@ -187,23 +215,7 @@ export function renderSidebar() {
     }
   }
 
-  driveList.innerHTML = drives.length
-    ? drives
-        .map((drive) => {
-          const hasSpace = Number.isFinite(drive.total) && Number.isFinite(drive.free) && drive.total > 0;
-          const used = hasSpace ? ((drive.total - drive.free) / drive.total) * 100 : null;
-          const meta = hasSpace ? `${humanSize(drive.free)} free` : '';
-          return navItem({
-            path: drive.path,
-            name: drive.name,
-            iconName: 'drive',
-            meta,
-            meter: used,
-            active: samePath(drive.path, current),
-          });
-        })
-        .join('')
-    : '<div class="nav-empty">No drives detected.</div>';
+  renderDrives();
 
   if (rescanBtn) rescanBtn.innerHTML = icon('refresh', 12);
   const onWindows = state.app ? state.app.platform === 'windows' : true;

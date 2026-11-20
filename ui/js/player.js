@@ -5,6 +5,7 @@ import { esc, basename, dirname, clamp, fmtDuration, themeColor, uid } from './u
 import { toast, showMenu, confirmDialog } from './dialogs.js';
 import { isMidiPath, renderMidi } from './midi.js';
 import { loadSoundfont } from './sf2.js';
+import { shortcutTitle } from './keyboard.js';
 
 const AUDIO = 'audio';
 const VIDEO = 'video';
@@ -301,8 +302,13 @@ function updatePlayButton() {
   if (!ui || !engine) return;
   const paused = engine.paused || engine.ended;
   ui.toggle.innerHTML = icon(paused ? 'play' : 'pause', 16);
-  ui.toggle.title = paused ? 'Play (Space)' : 'Pause (Space)';
+  ui.toggle.title = shortcutTitle(paused ? 'Play' : 'Pause', 'playPause');
   ui.toggle.classList.toggle('playing', !paused);
+}
+
+export function refreshShortcutHints() {
+  if (!ui) return;
+  ui.toggle.title = shortcutTitle(!engine || engine.paused || engine.ended ? 'Play' : 'Pause', 'playPause');
 }
 
 function updateMuteButton() {
@@ -816,7 +822,7 @@ export function initPlayer() {
       </div>
       <div class="player-controls">
         <button class="player-btn" type="button" data-player="prev" title="Previous">${icon('skipBack', 15)}</button>
-        <button class="player-btn player-play" type="button" data-player="toggle" title="Play (Space)">${icon('play', 16)}</button>
+        <button class="player-btn player-play" type="button" data-player="toggle" title="${esc(shortcutTitle('Play', 'playPause'))}">${icon('play', 16)}</button>
         <button class="player-btn" type="button" data-player="next" title="Next">${icon('skipForward', 15)}</button>
         <button class="player-btn player-loop-btn" type="button" data-player="loop" aria-pressed="${state.media.loop}" title="Loop current file: ${state.media.loop ? 'on' : 'off'}">${icon('repeat', 15)}</button>
       </div>

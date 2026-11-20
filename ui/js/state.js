@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { loadBindings, savedBindings } from './keyboard.js';
 import { applyThemeHue, basename, clamp, DEFAULT_HUE, uid } from './util.js';
 
 export const state = {
@@ -23,6 +24,10 @@ export const state = {
   thumbSize: 176,
   nestedShare: 1,
   searchRecursive: false,
+  searchWildcards: false,
+  searchRegex: false,
+  searchError: null,
+  filtering: false,
   modelSpin: true,
   soundFont: null,
   themeHue: DEFAULT_HUE,
@@ -137,6 +142,7 @@ export async function loadSession() {
   } catch {
     saved = null;
   }
+  loadBindings(saved?.keybindings);
   if (saved && typeof saved === 'object') {
     if (Array.isArray(saved.bookmarks)) {
       state.bookmarks = saved.bookmarks
@@ -154,6 +160,8 @@ export async function loadSession() {
     }
     state.preview.open = saved.previewOpen !== false;
     state.searchRecursive = saved.searchRecursive === true;
+    state.searchWildcards = saved.searchWildcards === true;
+    state.searchRegex = saved.searchRegex === true;
     state.modelSpin = saved.modelSpin !== false;
     state.soundFont = typeof saved.soundFont === 'string' && saved.soundFont ? saved.soundFont : null;
     state.showPlaylists = saved.showPlaylists === true;
@@ -212,6 +220,7 @@ export async function loadSession() {
 export function captureSession() {
   return {
     version: 1,
+    keybindings: savedBindings(),
     tabs: state.tabs.map((tab) => ({
       path: tab.path,
       view: tab.view,
@@ -225,6 +234,8 @@ export function captureSession() {
     thumbSize: state.thumbSize,
     nestedShare: state.nestedShare,
     searchRecursive: state.searchRecursive,
+    searchWildcards: state.searchWildcards,
+    searchRegex: state.searchRegex,
     modelSpin: state.modelSpin,
     soundFont: state.soundFont,
     themeHue: state.themeHue,

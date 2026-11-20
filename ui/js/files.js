@@ -1,6 +1,7 @@
 import { api, gifUrl, mediaUrl } from './api.js';
 import { state, activeTab, app, scheduleSave } from './state.js';
 import { icon, kindIcon } from './icons.js';
+import { shortcutLabel } from './keyboard.js';
 import { fontTileHtml, observeFontTiles } from './fonts.js';
 import { soundfontTileHtml, observeSoundfontTiles } from './sf2.js';
 import { pageTileHtml, observePageTiles } from './pages.js';
@@ -57,6 +58,7 @@ const FILTERS = [
 ];
 
 const matchMap = new Map();
+let filterCache = null;
 const thumbCache = new Map();
 const thumbQueue = [];
 const MAX_CACHE = 4000;
@@ -176,32 +178,69 @@ function compareEntries(a, b, sort) {
   return result * (sort.dir < 0 ? -1 : 1);
 }
 
+function setMatchRange(path, range) {
+  if (range) matchMap.set(path, Array.from({ length: range[1] - range[0] }, (_, index) => range[0] + index));
+}
+
 export function recomputeVisible() {
   const tab = activeTab();
   matchMap.clear();
+  state.filtering = false;
+  if (state.searchResults === null) state.searchError = null;
   if (!tab) {
+    filterCache = null;
     state.visibleEntries = [];
     return;
   }
   const query = (tab.query || '').trim();
-
-  if (state.searchResults !== null) {
-    let items = state.searchResults.filter((entry) => matchesFilter(entry, tab.filter));
-    if (query) {
-      items = items.filter((entry) => {
-        const match = fuzzy(entry.name, query);
-        if (match) matchMap.set(entry.path, match.indices);
-        return Boolean(match);
-      });
-    }
-    state.visibleEntries = items.slice().sort((a, b) => compareEntries(a, b, tab.sort));
-    return;
-  }
-
-  const base = state.listing?.entries || [];
+  const patterns = state.searchWildcards || state.searchRegex;
+  const isSearch = state.searchResults !== null;
+  const base = isSearch ? state.searchResults : state.listing?.entries || [];
   let items = base.filter((entry) => matchesFilter(entry, tab.filter));
 
-  if (query) {
+  if (!query || !patterns || isSearch) filterCache = null;
+  if (query && patterns && !isSearch && state.listing) {
+    const listing = state.listing;
+    const path = tab.path;
+    const token = state.loadToken;
+    const wildcards = state.searchWildcards;
+    const regex = state.searchRegex;
+    const key = JSON.stringify([tab.id, path, token, query, wildcards, regex]);
+    if (filterCache?.listing !== listing || filterCache?.key !== key) {
+      const request = { listing, key, matches: null, error: null, promise: null };
+      filterCache = request;
+      const isCurrent = () => filterCache === request && state.listing === listing && state.loadToken === token
+        && activeTab() === tab && tab.path === path && tab.query.trim() === query && state.searchResults === null
+        && state.searchWildcards === wildcards && state.searchRegex === regex;
+      request.promise = api.filterNames(base.map((entry) => entry.name), query, wildcards, regex)
+        .then((matches) => {
+          request.matches = new Map(matches.map((match) => [base[match.index].path, match.range]));
+        })
+        .catch((error) => {
+          request.matches = new Map();
+          request.error = String(error);
+        })
+        .then(() => {
+          if (!isCurrent()) return;
+          recomputeVisible();
+          renderFiles();
+          renderFilters();
+        });
+    }
+    state.filtering = filterCache.matches === null;
+    state.searchError = filterCache.error;
+    if (state.filtering) {
+      state.visibleEntries = [];
+      return filterCache.promise;
+    }
+    items = items.filter((entry) => {
+      if (!filterCache.matches.has(entry.path)) return false;
+      setMatchRange(entry.path, filterCache.matches.get(entry.path));
+      return true;
+    });
+  } else if (query && patterns && isSearch) {
+    items.forEach((entry) => setMatchRange(entry.path, entry.matchRange));
+  } else if (query) {
     items = items.filter((entry) => {
       const match = fuzzy(entry.name, query);
       if (match) matchMap.set(entry.path, match.indices);
@@ -210,6 +249,7 @@ export function recomputeVisible() {
   }
 
   state.visibleEntries = items.slice().sort((a, b) => compareEntries(a, b, tab.sort));
+  state.focusIndex = clamp(state.focusIndex, 0, Math.max(0, state.visibleEntries.length - 1));
 }
 
 export function currentItems() {
@@ -267,6 +307,7 @@ export function setQuery(query) {
 }
 
 export function beginSearch() {
+  state.searchError = null;
   state.searching = true;
   state.searchResults = [];
   recomputeVisible();
@@ -274,7 +315,8 @@ export function beginSearch() {
   renderFiles();
 }
 
-export function finishSearch(results) {
+export function finishSearch(results, error = null) {
+  state.searchError = error;
   state.searching = false;
   state.searchResults = Array.isArray(results) ? results : [];
   recomputeVisible();
@@ -469,6 +511,7 @@ function searchBanner(tab) {
   const scope = state.searchRecursive ? 'including subfolders' : 'in this folder';
   const label = state.searching
     ? `<span>${icon('loader', 12, 'spin')} Searching ${scope}…</span>`
+    : state.searchError ? '<span>Search could not complete</span>'
     : `<span>Found <strong>${humanCount(count)}</strong> ${count === 1 ? 'item' : 'items'} for <strong>${esc(tab.query)}</strong> ${scope}</span>`;
   return `
     <div class="results-banner">
@@ -542,6 +585,19 @@ export function hidePaneState() {
 function emptyState(tab) {
   const isSearch = state.searchResults !== null;
   const filtering = Boolean((tab.query || '').trim()) || tab.filter !== 'all';
+  if (state.searchError) {
+    renderPaneState({
+      iconName: 'alert',
+      title: 'Cannot match this search',
+      text: state.searchError,
+      actions: [{ label: 'Clear search', action: 'reset-filters', kind: 'primary', icon: 'x' }],
+    });
+    return;
+  }
+  if (state.filtering) {
+    renderPaneState({ iconName: 'loader', title: 'Filtering filenames…' });
+    return;
+  }
   if (isSearch && state.searching) {
     hidePaneState();
     return;
@@ -612,6 +668,7 @@ export function renderFiles() {
   }
 
   scroll.innerHTML = html;
+  document.getElementById('search-input')?.setAttribute('aria-invalid', state.searchError ? 'true' : 'false');
 
   if (state.loading || state.error) {
     // Loading and error overlays are managed by refreshFiles.
@@ -735,7 +792,8 @@ export function updateStatus() {
     hintEl.textContent =
       tab.view === 'viz'
         ? 'Click a tile for details · double-click to drill in'
-        : 'Ctrl+K commands · / search · F2 rename · Del to trash';
+        : [['palette', 'commands'], ['search', 'search'], ['rename', 'rename'], ['trash', 'to trash']]
+          .filter(([id]) => shortcutLabel(id)).map(([id, label]) => `${shortcutLabel(id)} ${label}`).join(' · ');
   }
   if (sizeEl) {
     sizeEl.textContent = items.length ? `${humanCount(files.length)} files · ${humanSize(total)}` : '';
@@ -1320,29 +1378,18 @@ function scrollIndexIntoView(index) {
   if (el) el.scrollIntoView({ block: 'nearest' });
 }
 
-function gridColumns() {
-  const scroll = scrollEl();
-  const grid = scroll?.querySelector('.files-grid');
-  if (!grid) return 1;
-  const value = getComputedStyle(grid).gridTemplateColumns;
-  return Math.max(1, value.split(' ').filter(Boolean).length);
-}
-
 export function moveFocusByDirection(direction, extend = false) {
   const items = state.visibleEntries;
   if (!items.length) return;
-  const tab = activeTab();
-  const gridMode = tab?.view === 'grid' && state.searchResults === null;
-  const step = gridMode && (direction === 'up' || direction === 'down') ? gridColumns() : 1;
   let delta = 0;
-  if (direction === 'up') delta = -step;
-  else if (direction === 'down') delta = step;
+  if (direction === 'up') delta = -1;
+  else if (direction === 'down') delta = 1;
   else if (direction === 'left') delta = -1;
   else if (direction === 'right') delta = 1;
   else if (direction === 'home') delta = -state.focusIndex;
   else if (direction === 'end') delta = items.length - 1 - state.focusIndex;
-  else if (direction === 'pagedown') delta = step * 3;
-  else if (direction === 'pageup') delta = -step * 3;
+  else if (direction === 'pagedown') delta = 3;
+  else if (direction === 'pageup') delta = -3;
 
   const next = clamp(state.focusIndex + delta, 0, items.length - 1);
   state.focusIndex = next;
@@ -1794,7 +1841,13 @@ export async function refreshFiles({ silent = false } = {}) {
     state.focusIndex = 0;
     if (!silent) state.renderLimit = PAGE_SIZE;
 
-    recomputeVisible();
+    let filtering = recomputeVisible();
+    while (filtering) {
+      renderFiles();
+      await filtering;
+      if (token !== state.loadToken) return false;
+      filtering = recomputeVisible();
+    }
     hidePaneState();
     renderFiles();
     renderFilters();

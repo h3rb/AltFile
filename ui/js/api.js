@@ -68,8 +68,10 @@ export const api = {
   vizCachePut: (key, savedAt, result) => invoke('viz_cache_put', { key, savedAt, result }),
   cancelScan: () => invoke('cancel_scan'),
   vizWatch: (path) => invoke('viz_watch', { path }),
-  searchFiles: (path, query, limit, includeHidden) =>
-    invoke('search_files', { path, query, limit, includeHidden }),
+  searchFiles: (path, query, limit, includeHidden, wildcards, regex) =>
+    invoke('search_files', { path, query, limit, includeHidden, wildcards, regex }),
+  filterNames: (names, query, wildcards, regex) =>
+    invoke('filter_names', { names, query, wildcards, regex }),
   loadSettings: () => invoke('load_settings'),
   saveSettings: (settings) => invoke('save_settings', { settings }),
   takeLaunchPath: () => invoke('take_launch_path'),
@@ -78,6 +80,12 @@ export const api = {
   uninstallExplorerMenu: () => invoke('uninstall_explorer_menu'),
   explorerMenuStatus: () => invoke('explorer_menu_status'),
   installUpdate: () => invoke('install_update'),
+  terminalShells: () => invoke('terminal_shells'),
+  terminalStart: (path, shell, cols, rows) => invoke('terminal_start', { path, shell, cols, rows }),
+  terminalRead: (id) => invoke('terminal_read', { id }),
+  terminalWrite: (id, data) => invoke('terminal_write', { id, data }),
+  terminalResize: (id, cols, rows) => invoke('terminal_resize', { id, cols, rows }),
+  terminalClose: (id) => invoke('terminal_close', { id }),
 };
 
 export function listen(event, handler) {

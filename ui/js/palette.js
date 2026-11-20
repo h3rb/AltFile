@@ -1,6 +1,7 @@
 import { state, activeTab, app } from './state.js';
 import { selectedEntries } from './files.js';
 import { icon, kindIcon } from './icons.js';
+import { commandForEvent, isEditingChord } from './keyboard.js';
 import {
   esc,
   fuzzy,
@@ -353,6 +354,13 @@ function runIndex(index) {
 
 function onKeyDown(event) {
   if (!session) return;
+  if (event.target === session.input && isEditingChord(event)) return;
+  if (commandForEvent(event) === 'palette' && (event.ctrlKey || event.metaKey || event.altKey || /^F\d+$/.test(event.key))) {
+    event.preventDefault();
+    event.stopPropagation();
+    closePalette();
+    return;
+  }
   if (event.key === 'Escape') {
     event.preventDefault();
     event.stopPropagation();

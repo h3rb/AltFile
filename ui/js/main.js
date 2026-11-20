@@ -31,6 +31,8 @@ import { openSettings } from './settings.js';
 import { initUpdates } from './updates.js';
 import { systemMenuItem } from './systemmenu.js';
 import { isSoundfontEntry } from './sf2.js';
+import { initTerminal, openTerminal, refreshTerminalShortcuts } from './terminal.js';
+import { commandForEvent, isDefaultBinding, isEditingChord, shortcutLabel, shortcutTitle, getBindings, bindingLabel } from './keyboard.js';
 
 const VIEW_BUTTONS = { grid: 'view-grid', list: 'view-list', viz: 'view-viz' };
 const SORT_LABELS = { name: 'Name', size: 'Size', modified: 'Date', kind: 'Kind' };
@@ -40,6 +42,10 @@ let fsTimer = 0;
 let searchTimer = null;
 let windowTitle = null;
 let pendingLaunchPath = '';
+let placesRefreshing = false;
+let placesRefreshPending = false;
+let selectionRefreshing = false;
+let selectionRefreshPending = false;
 
 function applyLaunchPath(path) {
   const target = String(path || '').trim();
@@ -106,7 +112,7 @@ function renderTabs() {
         <div class="tab${tab.id === state.activeId ? ' active' : ''}" data-tab-id="${esc(tab.id)}" role="tab" aria-selected="${tab.id === state.activeId}" title="${esc(tab.path)}">
           ${icon('folder', 13)}
           <span class="tab-name">${esc(tabLabel(tab.path))}</span>
-          <button class="tab-close" type="button" data-close-tab="${esc(tab.id)}" aria-label="Close tab" title="Close tab (Ctrl+W)">${icon('x', 11)}</button>
+          <button class="tab-close" type="button" data-close-tab="${esc(tab.id)}" aria-label="Close tab" title="${esc(shortcutTitle('Close tab', 'closeTab'))}">${icon('x', 11)}</button>
         </div>`
     )
     .join('');
@@ -139,7 +145,11 @@ function syncSearchUi() {
   const value = tab?.query || '';
   if (input.value !== value) input.value = value;
   const recursive = state.searchRecursive;
-  input.placeholder = recursive ? 'Search subfolders' : 'Filter this folder';
+  const modes = [state.searchWildcards && 'Wildcards', state.searchRegex && 'Regex'].filter(Boolean);
+  input.placeholder = `${recursive ? 'Search subfolders' : 'Filter this folder'}${modes.length ? ` · ${modes.join(' + ')}` : ''}`;
+  input.title = modes.length
+    ? `${modes.join(' + ')}: ${modes.length === 2 ? 'a name can match either pattern style. ' : ''}Wildcards match the whole name; regex matches within the name. Case-insensitive by default.`
+    : 'Fuzzy filename matching. Enable wildcards or regular expressions in Settings.';
   if (scope) {
     scope.classList.toggle('on', recursive);
     scope.title = recursive
@@ -147,6 +157,31 @@ function syncSearchUi() {
       : 'Searching this folder only — click to include subfolders';
     scope.setAttribute('aria-pressed', recursive ? 'true' : 'false');
   }
+}
+
+function refreshShortcutHints() {
+  const hints = {
+    'nav-back': ['Back', 'back'], 'nav-forward': ['Forward', 'forward'], 'nav-up': ['Up one folder', 'parent'],
+    refresh: ['Refresh', 'refresh'], 'path-edit': ['Edit path', 'editPath'], 'new-tab': ['New tab', 'newTab'],
+    'view-grid': ['Grid view', 'grid'], 'view-list': ['List view', 'list'], 'view-viz': ['Visualize folder', 'visualize'],
+    'preview-toggle': [state.preview.open ? 'Hide preview' : 'Show preview', 'preview'],
+    'palette-hint': ['Command palette', 'palette'],
+  };
+  for (const [id, [label, command]] of Object.entries(hints)) {
+    const button = document.getElementById(id);
+    if (button) button.title = shortcutTitle(label, command);
+  }
+  const paletteHint = document.getElementById('palette-hint');
+  if (paletteHint) paletteHint.innerHTML = `<kbd>${esc(bindingLabel(getBindings('palette')[0] || 'Commands'))}</kbd>`;
+  const searchHint = document.querySelector('.search-kbd');
+  if (searchHint) {
+    searchHint.textContent = bindingLabel(getBindings('search')[0] || '');
+    searchHint.hidden = !searchHint.textContent;
+  }
+  for (const button of document.querySelectorAll('[data-close-tab]')) button.title = shortcutTitle('Close tab', 'closeTab');
+  files.updateStatus();
+  refreshTerminalShortcuts();
+  player.refreshShortcutHints();
 }
 
 function updateToolbar() {
@@ -173,13 +208,14 @@ function updateToolbar() {
     const active = state.preview.open && tab.view !== 'viz';
     previewToggle.classList.toggle('active', active);
     previewToggle.setAttribute('aria-pressed', active ? 'true' : 'false');
-    previewToggle.title = state.preview.open ? 'Hide preview (Ctrl+P)' : 'Show preview (Ctrl+P)';
+    previewToggle.title = shortcutTitle(state.preview.open ? 'Hide preview' : 'Show preview', 'preview');
   }
   if (sortBtn) {
     const arrow = tab.sort.dir < 0 ? 'chevronDown' : 'chevronUp';
     sortBtn.innerHTML = `${icon('sort', 13)}<span>${esc(SORT_LABELS[tab.sort.key] || 'Name')}</span>${icon(arrow, 11)}`;
     sortBtn.title = `Sort by ${SORT_LABELS[tab.sort.key] || 'Name'} — click to change`;
   }
+  refreshShortcutHints();
   syncSearchUi();
 }
 
@@ -278,7 +314,30 @@ function goUp() {
   if (parent) navigate(parent);
 }
 
+async function refreshPlaces() {
+  if (placesRefreshing) {
+    placesRefreshPending = true;
+    return;
+  }
+  placesRefreshing = true;
+  try {
+    do {
+      placesRefreshPending = false;
+      const places = await api.listPlaces();
+      if (JSON.stringify(places) !== JSON.stringify(state.places)) {
+        state.places = places;
+        sidebar.renderDrives();
+      }
+    } while (placesRefreshPending);
+  } catch (error) {
+    console.warn('Could not refresh drives', error);
+  } finally {
+    placesRefreshing = false;
+  }
+}
+
 async function refreshCurrent() {
+  refreshPlaces();
   const scroll = document.getElementById('files-scroll');
   const top = scroll?.scrollTop || 0;
   const ok = await files.refreshFiles();
@@ -500,11 +559,19 @@ function resetSearch() {
   files.renderFilters();
 }
 
+function shouldSearchRecursively(query) {
+  return state.searchRecursive && query.length >= (state.searchWildcards || state.searchRegex ? 1 : 2);
+}
+
 async function runSearchNow() {
+  if (searchTimer) {
+    searchTimer.cancel();
+    searchTimer = null;
+  }
   const tab = activeTab();
   if (!tab) return;
   const query = (tab.query || '').trim();
-  if (!state.searchRecursive || query.length < 2) {
+  if (!shouldSearchRecursively(query)) {
     resetSearch();
     return;
   }
@@ -513,17 +580,18 @@ async function runSearchNow() {
   const path = tab.path;
   files.beginSearch();
   try {
-    const hits = await api.searchFiles(path, query, 400, tab.showHidden);
+    const hits = await api.searchFiles(path, query, 400, tab.showHidden, state.searchWildcards, state.searchRegex);
     if (token !== state.searchToken || activeTab()?.id !== tabId) return;
     files.finishSearch(hits);
   } catch (error) {
     if (token !== state.searchToken || activeTab()?.id !== tabId) return;
-    files.finishSearch([]);
-    toast(String(error), { type: 'error' });
+    files.finishSearch([], String(error));
   }
 }
 
 function scheduleRunSearch() {
+  state.searchToken += 1;
+  files.beginSearch();
   if (searchTimer) searchTimer.cancel();
   searchTimer = debounce(() => {
     searchTimer = null;
@@ -537,7 +605,7 @@ function onSearchInput() {
   const input = document.getElementById('search-input');
   if (!tab || !input) return;
   tab.query = input.value;
-  if (state.searchRecursive && tab.query.trim().length >= 2) scheduleRunSearch();
+  if (shouldSearchRecursively(tab.query.trim())) scheduleRunSearch();
   else resetSearch();
 }
 
@@ -549,8 +617,17 @@ function setSearchRecursive(value) {
   syncSearchUi();
   const tab = activeTab();
   if (!tab) return;
-  if (next && (tab.query || '').trim().length >= 2) scheduleRunSearch();
-  else if (!next) resetSearch();
+  if (shouldSearchRecursively((tab.query || '').trim())) scheduleRunSearch();
+  else resetSearch();
+}
+
+function setSearchPatterns(wildcards, regex) {
+  state.searchWildcards = Boolean(wildcards);
+  state.searchRegex = Boolean(regex);
+  scheduleSave();
+  syncSearchUi();
+  if (shouldSearchRecursively((activeTab()?.query || '').trim())) scheduleRunSearch();
+  else resetSearch();
 }
 
 function toggleSearchScope() {
@@ -638,9 +715,9 @@ function moreMenuItems() {
   const tab = activeTab();
   if (!tab) return [];
   return [
-    { label: 'New folder', icon: 'folderPlus', shortcut: 'Ctrl+Shift+N', onClick: () => ops.newFolder() },
-    { label: 'New tab', icon: 'plus', shortcut: 'Ctrl+T', onClick: () => openTab(tab.path) },
-    { label: 'Refresh', icon: 'refresh', shortcut: 'F5', onClick: () => refreshCurrent() },
+    { label: 'New folder', icon: 'folderPlus', shortcut: shortcutLabel('newFolder'), onClick: () => ops.newFolder() },
+    { label: 'New tab', icon: 'plus', shortcut: shortcutLabel('newTab'), onClick: () => openTab(tab.path) },
+    { label: 'Refresh', icon: 'refresh', shortcut: shortcutLabel('refresh'), onClick: () => refreshCurrent() },
     { label: 'Playlist', icon: 'playlist', hidden: !player.hasQueue(), onClick: () => player.showQueue() },
     { separator: true },
     {
@@ -651,7 +728,7 @@ function moreMenuItems() {
     { label: 'Bookmark this folder', icon: 'bookmark', onClick: () => sidebar.addBookmarkCurrent() },
     { label: 'Copy current path', icon: 'copy', onClick: () => ops.copyEntryPaths([{ path: tab.path, name: tabLabel(tab.path) }]) },
     { separator: true },
-    { label: 'Command palette', icon: 'command', shortcut: 'Ctrl+K', onClick: () => openPalette() },
+    { label: 'Command palette', icon: 'command', shortcut: shortcutLabel('palette'), onClick: () => openPalette() },
     { label: 'Settings', icon: 'settings', onClick: () => openSettings() },
   ];
 }
@@ -663,15 +740,15 @@ function backgroundMenu(x, y) {
     x,
     y,
     items: [
-      { label: 'New folder', icon: 'folderPlus', shortcut: 'Ctrl+Shift+N', onClick: () => ops.newFolder() },
+      { label: 'New folder', icon: 'folderPlus', shortcut: shortcutLabel('newFolder'), onClick: () => ops.newFolder() },
       {
         label: 'Paste',
         icon: 'clipboard',
-        shortcut: 'Ctrl+V',
+        shortcut: shortcutLabel('paste'),
         disabled: !state.clipboard.paths.length,
         onClick: () => ops.pasteIntoCurrent(),
       },
-      { label: 'Refresh', icon: 'refresh', shortcut: 'F5', onClick: () => refreshCurrent() },
+      { label: 'Refresh', icon: 'refresh', shortcut: shortcutLabel('refresh'), onClick: () => refreshCurrent() },
       { separator: true },
       {
         label: tab.showHidden ? 'Hide hidden files' : 'Show hidden files',
@@ -679,7 +756,7 @@ function backgroundMenu(x, y) {
         onClick: () => toggleHidden(),
       },
       { label: 'Bookmark this folder', icon: 'bookmark', onClick: () => sidebar.addBookmarkCurrent() },
-      { label: 'Command palette', icon: 'command', shortcut: 'Ctrl+K', onClick: () => openPalette() },
+      { label: 'Command palette', icon: 'command', shortcut: shortcutLabel('palette'), onClick: () => openPalette() },
       { separator: true },
       systemMenuItem(tab.path),
       { label: 'Settings', icon: 'settings', onClick: () => openSettings() },
@@ -717,7 +794,7 @@ function entryMenu(entry, x, y, selection = null) {
       {
         label: entry.isDir ? 'Open folder' : 'Open',
         icon: entry.isDir ? 'folderOpen' : 'play',
-        shortcut: 'Enter',
+        shortcut: shortcutLabel('open'),
         onClick: () => openEntry(entry),
       },
       {
@@ -778,13 +855,13 @@ function entryMenu(entry, x, y, selection = null) {
       {
         label: targets.length > 1 ? `Copy ${targets.length} items` : 'Copy',
         icon: 'copy',
-        shortcut: 'Ctrl+C',
+        shortcut: shortcutLabel('copy'),
         onClick: () => ops.copySelection(false, targets),
       },
       {
         label: targets.length > 1 ? `Cut ${targets.length} items` : 'Cut',
         icon: 'cut',
-        shortcut: 'Ctrl+X',
+        shortcut: shortcutLabel('cut'),
         onClick: () => ops.copySelection(true, targets),
       },
       { label: 'Copy path', icon: 'clipboard', onClick: () => ops.copyEntryPaths(targets) },
@@ -792,14 +869,14 @@ function entryMenu(entry, x, y, selection = null) {
       {
         label: 'Rename',
         icon: 'pencil',
-        shortcut: 'F2',
+        shortcut: shortcutLabel('rename'),
         hidden: !single,
         onClick: () => ops.renameEntry(entry),
       },
       {
         label: 'Move to Trash',
         icon: 'trash',
-        shortcut: 'Del',
+        shortcut: shortcutLabel('trash'),
         danger: true,
         onClick: () => ops.removeEntries(targets),
       },
@@ -870,206 +947,120 @@ function suppressNativeMenuKey(event) {
 }
 
 function onKeyDown(event) {
-  if (event.defaultPrevented) return;
-  const mod = event.ctrlKey || event.metaKey;
+  if (event.defaultPrevented || event.isComposing || event.getModifierState?.('AltGraph') || event.target.closest?.('#terminal-pane')) return;
   const key = event.key;
-  const lower = key.toLowerCase();
-
-  const paletteOpen = Boolean(document.querySelector('.palette-backdrop'));
-  if (paletteOpen) {
-    if (mod && lower === 'k') {
+  const command = commandForEvent(event);
+  const editable = isEditable(event.target);
+  const inputCommand = !editable || event.ctrlKey || event.metaKey || event.altKey || /^F\d+$/.test(key);
+  if (document.querySelector('.palette-backdrop')) {
+    if (command === 'palette' && inputCommand) {
       event.preventDefault();
       palette.closePalette();
     }
     return;
   }
   if (anyOverlayOpen()) return;
-
-  if (mod && lower === 'k') {
+  if (editable && (!inputCommand || isEditingChord(event) || !['palette', 'editPath', 'windowMenu'].includes(command))) return;
+  if (command && (key === 'ContextMenu' || key === 'Apps')) menuKeyAt = performance.now();
+  if (command === 'palette') {
     event.preventDefault();
     openPalette();
     return;
   }
-  if (mod && lower === 'l') {
+  if (command === 'editPath') {
     event.preventDefault();
     beginPathEdit();
     return;
   }
-  if (key === 'Escape' && pathEditing) {
+  if (command === 'windowMenu') {
     event.preventDefault();
-    endPathEdit(false);
+    if (state.app?.platform === 'windows') api.openWindowMenu().catch(() => {});
     return;
   }
-  if (key === 'ContextMenu' || key === 'Apps') {
-    if (mod) {
-      event.preventDefault();
-      menuKeyAt = performance.now();
-      openPalette();
-      return;
-    }
-    if (event.altKey) {
-      event.preventDefault();
-      menuKeyAt = performance.now();
-      if (state.app?.platform === 'windows') api.openWindowMenu().catch(() => {});
-      return;
-    }
-    if (isEditable(event.target)) return;
+  if (command === 'contextMenu') {
     event.preventDefault();
-    menuKeyAt = performance.now();
     openKeyboardMenu();
     return;
   }
-  if (isEditable(event.target)) return;
-
-  if (key === ' ' && player.hasQueue() && !event.target.closest?.('button, [role="button"]')) {
-    event.preventDefault();
-    player.togglePlay();
+  if (command === 'playPause') {
+    const nativeActivation = (key === ' ' || key === 'Enter') && event.target.closest?.('button, [role="button"]');
+    if (player.hasQueue() && !nativeActivation) {
+      event.preventDefault();
+      player.togglePlay();
+    }
     return;
   }
 
   const tab = activeTab();
   if (!tab) return;
   const vizMode = tab.view === 'viz';
-
-  if (key === 'Escape') {
-    if ((tab.query || '').trim() || state.searchResults !== null) {
-      event.preventDefault();
-      clearQuery();
-    } else {
-      files.clearSelection();
+  if (command) {
+    if ((command === 'copy' || command === 'cut') && window.getSelection()?.toString()) return;
+    event.preventDefault();
+    switch (command) {
+      case 'terminal': if (!event.repeat) openTerminal(); break;
+      case 'clear':
+        if ((tab.query || '').trim() || state.searchResults !== null) clearQuery();
+        else files.clearSelection();
+        break;
+      case 'nextTab':
+      case 'previousTab': {
+        const index = state.tabs.findIndex(item => item.id === state.activeId);
+        const next = state.tabs[(index + (command === 'previousTab' ? -1 : 1) + state.tabs.length) % state.tabs.length];
+        if (next) activateTab(next.id);
+        break;
+      }
+      case 'newTab': openTab(tab.path); break;
+      case 'closeTab': closeTab(state.activeId); break;
+      case 'preview': togglePreview(); break;
+      case 'refresh': refreshCurrent(); break;
+      case 'grid': setView('grid'); break;
+      case 'list': setView('list'); break;
+      case 'visualize': setView('viz'); break;
+      case 'newFolder': ops.newFolder(); break;
+      case 'search': focusSearch(); break;
+      case 'selectAll': files.selectAll(); break;
+      case 'copy':
+      case 'cut':
+        ops.copySelection(command === 'cut');
+        break;
+      case 'paste': ops.pasteIntoCurrent(); break;
+      case 'back': goHistory(-1); break;
+      case 'forward': goHistory(1); break;
+      case 'parent':
+        if (!event.repeat && !state.loading && !(vizMode && key === 'ArrowLeft' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey)) goUp();
+        break;
+      case 'rename': if (!vizMode) ops.renameEntry(files.focusedEntry()); break;
+      case 'trash': if (!vizMode) ops.removeEntries(); break;
+      case 'open':
+        if (!vizMode && files.focusedEntry()) openEntry(files.focusedEntry());
+        break;
+      case 'enterPreview': {
+        if (vizMode || event.repeat || state.loading) break;
+        const entry = files.focusedEntry();
+        if (!entry) break;
+        if (entry.isDir) navigate(entry.path);
+        else {
+          if (state.selection.size !== 1 || !state.selection.has(entry.path)) files.selectPath(entry.path);
+          if (state.preview.open) {
+            const el = document.querySelector('#files-scroll .file-card.focused, #files-scroll .file-row.focused');
+            const box = el?.getBoundingClientRect() || document.getElementById('files-scroll')?.getBoundingClientRect();
+            if (box) entryMenu(entry, box.left + box.width / 2, box.top + Math.min(box.height / 2, 48));
+          } else setPreviewOpen(true);
+        }
+        break;
+      }
+      default:
+        if (!vizMode) {
+          const extend = command.startsWith('select');
+          files.moveFocusByDirection(extend ? command.slice(6).toLowerCase() : command, extend);
+        }
     }
     return;
   }
 
-  if (mod && key === 'Tab') {
-    event.preventDefault();
-    const index = state.tabs.findIndex((item) => item.id === state.activeId);
-    const next = state.tabs[(index + (event.shiftKey ? -1 : 1) + state.tabs.length) % state.tabs.length];
-    if (next) activateTab(next.id);
-    return;
-  }
-  if (mod && lower === 't') {
-    event.preventDefault();
-    openTab(tab.path);
-    return;
-  }
-  if (mod && lower === 'w') {
-    event.preventDefault();
-    closeTab(state.activeId);
-    return;
-  }
-  if (mod && lower === 'p') {
-    event.preventDefault();
-    togglePreview();
-    return;
-  }
-  if (mod && lower === 'r') {
-    event.preventDefault();
-    refreshCurrent();
-    return;
-  }
-  if (mod && ['1', '2', '3'].includes(key)) {
-    event.preventDefault();
-    setView(key === '1' ? 'grid' : key === '2' ? 'list' : 'viz');
-    return;
-  }
-  if (mod && event.shiftKey && lower === 'n') {
-    event.preventDefault();
-    ops.newFolder();
-    return;
-  }
-  if (mod && lower === 'f') {
-    event.preventDefault();
-    focusSearch();
-    return;
-  }
-  if (mod && lower === 'a') {
-    event.preventDefault();
-    files.selectAll();
-    return;
-  }
-  if (mod && (lower === 'c' || lower === 'x')) {
-    if (window.getSelection()?.toString()) return;
-    event.preventDefault();
-    ops.copySelection(lower === 'x');
-    return;
-  }
-  if (mod && lower === 'v') {
-    event.preventDefault();
-    ops.pasteIntoCurrent();
-    return;
-  }
-
-  if (event.altKey && key === 'ArrowLeft') {
-    event.preventDefault();
-    goHistory(-1);
-    return;
-  }
-  if (event.altKey && key === 'ArrowRight') {
-    event.preventDefault();
-    goHistory(1);
-    return;
-  }
-  if (event.altKey && key === 'ArrowUp') {
-    event.preventDefault();
-    goUp();
-    return;
-  }
-
-  if (key === 'F5') {
-    event.preventDefault();
-    refreshCurrent();
-    return;
-  }
-  if (key === 'F2') {
-    event.preventDefault();
-    if (!vizMode) ops.renameEntry(files.focusedEntry());
-    return;
-  }
-  if (key === 'Delete') {
-    event.preventDefault();
-    if (!vizMode) ops.removeEntries();
-    return;
-  }
-  if (key === '/') {
-    event.preventDefault();
-    focusSearch();
-    return;
-  }
-  if (key === 'Backspace') {
-    event.preventDefault();
-    goUp();
-    return;
-  }
-  if (key === 'Enter') {
-    if (vizMode) return;
-    const entry = files.focusedEntry();
-    if (entry) {
-      event.preventDefault();
-      openEntry(entry);
-    }
-    return;
-  }
-
-  if (!vizMode) {
-    const moves = {
-      ArrowUp: 'up',
-      ArrowDown: 'down',
-      ArrowLeft: 'left',
-      ArrowRight: 'right',
-      Home: 'home',
-      End: 'end',
-      PageUp: 'pageup',
-      PageDown: 'pagedown',
-    };
-    const direction = moves[key];
-    if (direction) {
-      event.preventDefault();
-      files.moveFocusByDirection(direction, event.shiftKey);
-    }
-  }
-
-  if (!mod && !event.altKey && !event.isComposing && [...key].length === 1 && key !== ' ') {
+  if (isDefaultBinding(event)) event.preventDefault();
+  if (!editable && !event.ctrlKey && !event.metaKey && !event.altKey && [...key].length === 1 && key !== ' ') {
     event.preventDefault();
     focusSearch();
     const input = document.getElementById('search-input');
@@ -1079,25 +1070,37 @@ function onKeyDown(event) {
 }
 
 async function refreshPreservingSelection() {
-  const tab = activeTab();
-  if (!tab) return;
-  const scroll = document.getElementById('files-scroll');
-  const top = scroll?.scrollTop || 0;
-  const selected = [...state.selection];
-  const focusPath = files.focusedEntry()?.path;
-  const ok = await files.refreshFiles({ silent: true });
-  if (!ok) return;
-  const present = new Set(state.visibleEntries.map((entry) => entry.path));
-  state.selection = new Set(selected.filter((path) => present.has(path)));
-  if (focusPath) {
-    const index = state.visibleEntries.findIndex((entry) => entry.path === focusPath);
-    if (index >= 0) {
-      state.focusIndex = index;
-      state.anchorIndex = index;
-    }
+  if (selectionRefreshing) {
+    selectionRefreshPending = true;
+    return;
   }
-  files.updateSelectionUI();
-  if (scroll) scroll.scrollTop = top;
+  selectionRefreshing = true;
+  try {
+    do {
+      selectionRefreshPending = false;
+      const tab = activeTab();
+      if (!tab) return;
+      const scroll = document.getElementById('files-scroll');
+      const top = scroll?.scrollTop || 0;
+      const selected = [...state.selection];
+      const focusPath = files.focusedEntry()?.path;
+      const ok = await files.refreshFiles({ silent: true });
+      if (!ok) continue;
+      const present = new Set(state.visibleEntries.map((entry) => entry.path));
+      state.selection = new Set(selected.filter((path) => present.has(path)));
+      if (focusPath) {
+        const index = state.visibleEntries.findIndex((entry) => entry.path === focusPath);
+        if (index >= 0) {
+          state.focusIndex = index;
+          state.anchorIndex = index;
+        }
+      }
+      files.updateSelectionUI();
+      if (scroll) scroll.scrollTop = top;
+    } while (selectionRefreshPending);
+  } finally {
+    selectionRefreshing = false;
+  }
 }
 
 function bindStaticEvents() {
@@ -1219,6 +1222,7 @@ function bindStaticEvents() {
   document.addEventListener('keydown', onKeyDown);
   window.addEventListener('contextmenu', suppressNativeMenuKey, true);
   window.addEventListener('beforeunload', () => saveSessionNow());
+  window.addEventListener('focus', refreshPlaces);
 }
 
 function assignBridge() {
@@ -1236,6 +1240,8 @@ function assignBridge() {
     setPreviewOpen,
     togglePreview,
     setSearchRecursive,
+    setSearchPatterns,
+    refreshShortcutHints,
     newFolder: ops.newFolder,
     rename: ops.renameEntry,
     remove: ops.removeEntries,
@@ -1302,11 +1308,8 @@ async function boot() {
   } catch {
     state.app = { home: '/', sep: '/', platform: 'unknown', portable: false, version: '0.2.2', dataDir: '', cacheDir: '' };
   }
-  try {
-    state.places = await api.listPlaces();
-  } catch {
-    state.places = [];
-  }
+  await listen('drives:changed', refreshPlaces).catch(() => {});
+  await refreshPlaces();
 
   await loadSession();
   assignBridge();
@@ -1315,6 +1318,7 @@ async function boot() {
   player.initPlayer();
   preview.initPreview();
   viz.initViz();
+  initTerminal();
   ops.initOps();
   bindStaticEvents();
   listenFilesystem();
