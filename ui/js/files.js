@@ -294,6 +294,30 @@ export function selectAll() {
   updateSelectionUI();
 }
 
+export function toggleFocusedSelection() {
+  const entry = focusedEntry();
+  if (!entry) return;
+  if (state.selection.has(entry.path)) state.selection.delete(entry.path);
+  else state.selection.add(entry.path);
+  state.anchorIndex = state.focusIndex;
+  updateSelectionUI();
+}
+
+export function invertSelection() {
+  const items = state.visibleEntries;
+  if (!items.length) return;
+  const focusPath = items[state.focusIndex]?.path;
+  state.selection = new Set(items.filter((entry) => !state.selection.has(entry.path)).map((entry) => entry.path));
+  if (focusPath) {
+    const index = items.findIndex((entry) => entry.path === focusPath);
+    if (index >= 0) {
+      state.focusIndex = index;
+      state.anchorIndex = index;
+    }
+  }
+  updateSelectionUI();
+}
+
 export function clearSelection() {
   if (!state.selection.size) return;
   state.selection.clear();
@@ -1530,9 +1554,17 @@ function scrollIndexIntoView(index) {
   if (el) el.scrollIntoView({ block: 'nearest' });
 }
 
-export function moveFocusByDirection(direction, extend = false) {
+function gridColumns() {
+  const grid = scrollEl()?.querySelector('.files-grid');
+  if (!grid) return 1;
+  return Math.max(1, getComputedStyle(grid).gridTemplateColumns.split(/\s+/).filter(Boolean).length);
+}
+
+export function moveFocusByDirection(direction, extend = false, additive = false) {
   const items = state.visibleEntries;
   if (!items.length) return;
+  const view = activeTab()?.view;
+  if (additive && view === 'list' && (direction === 'left' || direction === 'right')) return;
   let delta = 0;
   if (direction === 'up') delta = -1;
   else if (direction === 'down') delta = 1;
@@ -1543,7 +1575,27 @@ export function moveFocusByDirection(direction, extend = false) {
   else if (direction === 'pagedown') delta = 3;
   else if (direction === 'pageup') delta = -3;
 
+  if (view === 'grid' && (direction === 'up' || direction === 'down')) {
+    delta = (direction === 'up' ? -1 : 1) * gridColumns();
+    const target = state.focusIndex + delta;
+    if (target < 0 || target >= items.length) return;
+  }
+
   const next = clamp(state.focusIndex + delta, 0, items.length - 1);
+
+  if (additive) {
+    const current = items[state.focusIndex];
+    if (current) {
+      if (state.anchorIndex == null) state.anchorIndex = state.focusIndex;
+      state.selection.add(current.path);
+    }
+    state.focusIndex = next;
+    state.selection.add(items[next].path);
+    updateSelectionUI();
+    scrollIndexIntoView(next);
+    return;
+  }
+
   state.focusIndex = next;
   const target = items[next];
 

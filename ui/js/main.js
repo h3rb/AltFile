@@ -830,6 +830,20 @@ function backgroundMenu(x, y) {
         onClick: () => ops.pasteIntoCurrent(),
       },
       { label: 'Refresh', icon: 'refresh', shortcut: shortcutLabel('refresh'), onClick: () => refreshCurrent() },
+      {
+        label: 'Select all',
+        icon: 'check',
+        shortcut: shortcutLabel('selectAll'),
+        hidden: state.selection.size > 1 || !state.visibleEntries.length,
+        onClick: () => files.selectAll(),
+      },
+      {
+        label: 'Invert selection',
+        icon: 'repeat',
+        shortcut: shortcutLabel('invertSelection'),
+        hidden: state.selection.size < 2,
+        onClick: () => files.invertSelection(),
+      },
       { separator: true },
       {
         label: tab.showHidden ? 'Hide hidden files' : 'Show hidden files',
@@ -946,6 +960,21 @@ function entryMenu(entry, x, y, selection = null) {
         onClick: () => ops.copySelection(true, targets),
       },
       { label: 'Copy path', icon: 'clipboard', onClick: () => ops.copyEntryPaths(targets) },
+      { separator: true },
+      {
+        label: 'Invert selection',
+        icon: 'repeat',
+        shortcut: shortcutLabel('invertSelection'),
+        hidden: targets.length < 2,
+        onClick: () => files.invertSelection(),
+      },
+      {
+        label: 'Select all',
+        icon: 'check',
+        shortcut: shortcutLabel('selectAll'),
+        hidden: targets.length > 1,
+        onClick: () => files.selectAll(),
+      },
       { separator: true },
       {
         label: 'Rename',
@@ -1101,6 +1130,8 @@ function onKeyDown(event) {
       case 'newFolder': ops.newFolder(); break;
       case 'search': focusSearch(); break;
       case 'selectAll': files.selectAll(); break;
+      case 'invertSelection': files.invertSelection(); break;
+      case 'toggleSelect': files.toggleFocusedSelection(); break;
       case 'copy':
       case 'cut':
         ops.copySelection(command === 'cut');
@@ -1109,6 +1140,10 @@ function onKeyDown(event) {
       case 'back': goHistory(-1); break;
       case 'forward': goHistory(1); break;
       case 'parent':
+        if (key === 'ArrowLeft' && tab.view === 'grid' && !vizMode && state.searchResults === null) {
+          files.moveFocusByDirection('left');
+          break;
+        }
         if (!event.repeat && !state.loading && !(vizMode && key === 'ArrowLeft' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey)) goUp();
         break;
       case 'rename': if (!vizMode) ops.renameEntry(files.focusedEntry()); break;
@@ -1117,7 +1152,12 @@ function onKeyDown(event) {
         if (!vizMode && files.focusedEntry()) openEntry(files.focusedEntry());
         break;
       case 'enterPreview': {
-        if (vizMode || event.repeat || state.loading) break;
+        if (vizMode) break;
+        if (key === 'ArrowRight' && tab.view === 'grid' && state.searchResults === null) {
+          files.moveFocusByDirection('right');
+          break;
+        }
+        if (event.repeat || state.loading) break;
         const entry = files.focusedEntry();
         if (!entry) break;
         if (entry.isDir) navigate(entry.path);
@@ -1134,7 +1174,9 @@ function onKeyDown(event) {
       default:
         if (!vizMode) {
           const extend = command.startsWith('select');
-          files.moveFocusByDirection(extend ? command.slice(6).toLowerCase() : command, extend);
+          const additive = command.startsWith('add');
+          const direction = extend ? command.slice(6).toLowerCase() : additive ? command.slice(3).toLowerCase() : command;
+          files.moveFocusByDirection(direction, extend, additive);
         }
     }
     return;

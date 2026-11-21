@@ -33,6 +33,13 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **Rubber-band selection**: drag in empty grid or list space to select every item the band touches; a drag
   started in the list's left margin selects whole rows. Hold `Ctrl`, `⌘`, or `Shift` to add the band to the
   current selection instead of replacing it.
+- **Selection colors**: selected items take a teal-to-blue gradient — the same transition as the drive
+  capacity meters — while the focused cursor item keeps the accent ring, so selection and position read
+  differently.
+- **Keyboard selection**: `Ctrl+Space` adds or removes the focused item from the selection. In the grid,
+  `Ctrl+Arrow` moves the focus and adds both the item it leaves and the item it lands on; in list view only
+  `Ctrl+Up` and `Ctrl+Down` do this. `Ctrl+Shift+A` inverts the selection, and the right-click menu offers
+  *Invert selection* when multiple items are selected and *Select all* when only the active item is selected.
 - **Shortcuts**: `.lnk` files are labeled *Shortcut* everywhere (cards, list, Details) and show a link badge over
   their grid thumbnail, while the thumbnail itself comes from the shell so it reflects the shortcut's target.
 - **Animated GIFs**: GIF cards and the preview pane show a still first-frame thumbnail, then play the original
@@ -257,6 +264,9 @@ the executable at compile time.
 | `Enter` | Open a typed path from search |
 | `.`, `:`, `\|`, `` ` ``, or `F4` | Open terminal in the active folder |
 | `Ctrl+A` | Select all |
+| `Ctrl+Space` | Add or remove the focused item from the selection |
+| `Ctrl+Arrow` (grid), `Ctrl+Up` / `Ctrl+Down` (list) | Move focus and add both items to the selection |
+| `Ctrl+Shift+A` | Invert selection |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
 | `Alt+Left` / `Alt+Right` | Back / forward |
 | `Alt+Up`, `Backspace` | Parent folder |
@@ -264,7 +274,7 @@ the executable at compile time.
 | `F2` | Rename focused item |
 | `Delete` | Move selection to Trash |
 | `Enter` | Open focused item |
-| Arrows, `Home`, `End`, `PageUp`, `PageDown` | Move focus (hold `Shift` to extend selection) |
+| Arrows, `Home`, `End`, `PageUp`, `PageDown` | Move focus (hold `Shift` to extend selection); in grid view `←` / `→` move the cursor, in list view they go up / enter |
 | `Menu` (application key) | Open the context menu at the current focus; the command palette opens when nothing is selected |
 | `Ctrl+Menu` | Command palette, bypassing the context menu |
 | `Alt+Menu` | Open the window (title bar) menu on Windows |
