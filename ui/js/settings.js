@@ -362,7 +362,7 @@ function settingsHtml() {
       </div>
       <p class="setting-desc">Click a binding, then press its replacement. Changes save automatically and replace all keys shown for that command. Escape cancels; Tab moves focus. Text editing and dialog navigation keep their standard keys. System-reserved shortcuts may not reach the app.</p>
       <div id="settings-shortcuts">${shortcutRows()}</div>
-      <p class="setting-desc">Mouse gestures are unchanged: Ctrl+Wheel zooms the grid / drifts the list; Ctrl+Middle toggles autoscroll.</p>
+      <p class="setting-desc">Mouse gestures are unchanged: drag in empty grid or list space to rubber-band select (hold Ctrl, ⌘, or Shift to add to the selection); Ctrl+Wheel zooms the grid / drifts the list; Ctrl+Middle toggles autoscroll.</p>
     </div>
 
     <div class="settings-group">

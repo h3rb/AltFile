@@ -9,6 +9,7 @@ import { detailCellHtml, observeDetails } from './details.js';
 import { cachedWave, fallbackPeaks, loadWave, drawWaveform } from './waveform.js';
 import { packMosaic, mosaicHtml } from './mosaic.js';
 import { visibleChips } from './chipfit.js';
+import { spanRect, rectsIntersect, marqueeSelection } from './marquee.js';
 import {
   esc,
   basename,
@@ -670,6 +671,7 @@ function emptyState(tab) {
 export function renderFiles() {
   stopDrift();
   stopPanning();
+  cancelMarquee();
   const scroll = scrollEl();
   const tab = activeTab();
   if (!scroll || !tab) return;
@@ -1595,8 +1597,11 @@ function clickedIndex(el) {
 }
 
 const DRAG_THRESHOLD = 6;
+const MARQUEE_THRESHOLD = 5;
 let dragCandidate = null;
 let dragBusy = false;
+let marqueeDrag = null;
+let suppressEmptyClick = false;
 
 function entryForElement(el) {
   const path = el?.dataset?.path;
@@ -1675,15 +1680,123 @@ async function beginDrag(el) {
   }
 }
 
+function samePaths(a, b) {
+  if (a.size !== b.size) return false;
+  for (const path of a) if (!b.has(path)) return false;
+  return true;
+}
+
+function cancelMarquee() {
+  if (!marqueeDrag) return;
+  marqueeDrag.box?.remove();
+  marqueeDrag = null;
+}
+
+function endMarquee() {
+  if (!marqueeDrag) return;
+  if (marqueeDrag.active) suppressEmptyClick = true;
+  cancelMarquee();
+}
+
+function marqueeBounds(x, y) {
+  const scroll = scrollEl();
+  if (!scroll) return null;
+  const bounds = scroll.getBoundingClientRect();
+  const rect = spanRect(marqueeDrag.x0, marqueeDrag.y0, x, y);
+  let left = Math.max(rect.left, bounds.left);
+  let right = Math.min(rect.left + rect.width, bounds.right);
+  if (activeTab()?.view === 'list') {
+    const row = scroll.querySelector('.file-row');
+    if (row) {
+      const rowRect = row.getBoundingClientRect();
+      left = Math.min(left, Math.max(rowRect.left, bounds.left));
+      right = Math.max(right, Math.min(rowRect.right, bounds.right));
+    }
+  }
+  const top = Math.max(rect.top, bounds.top);
+  const bottom = Math.min(rect.top + rect.height, bounds.bottom);
+  return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+}
+
+function updateMarquee(x, y) {
+  const scroll = scrollEl();
+  if (!scroll || !marqueeDrag) return;
+  const rect = marqueeBounds(x, y);
+  if (!rect) return;
+  if (!marqueeDrag.box) {
+    marqueeDrag.box = document.createElement('div');
+    marqueeDrag.box.className = 'marquee-box';
+    document.body.appendChild(marqueeDrag.box);
+  }
+  marqueeDrag.box.style.left = `${rect.left}px`;
+  marqueeDrag.box.style.top = `${rect.top}px`;
+  marqueeDrag.box.style.width = `${rect.width}px`;
+  marqueeDrag.box.style.height = `${rect.height}px`;
+
+  const hits = [];
+  let firstIndex = -1;
+  let lastIndex = -1;
+  for (const el of scroll.querySelectorAll('[data-path]')) {
+    const index = clickedIndex(el);
+    const entry = state.visibleEntries[index];
+    if (!entry) continue;
+    if (!rectsIntersect(rect, el.getBoundingClientRect())) continue;
+    hits.push(entry.path);
+    if (firstIndex < 0 || index < firstIndex) firstIndex = index;
+    if (index > lastIndex) lastIndex = index;
+  }
+  const selection = marqueeSelection(hits, marqueeDrag.base, marqueeDrag.additive);
+  if (!samePaths(selection, state.selection)) {
+    state.selection = selection;
+    if (firstIndex >= 0) {
+      state.anchorIndex = firstIndex;
+      state.focusIndex = lastIndex;
+    }
+    updateSelectionUI();
+  }
+}
+
 function onPointerDown(event) {
   if (event.button !== 0 || !event.isPrimary || dragBusy) return;
-  if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const scroll = scrollEl();
+  if (!scroll || !scroll.contains(event.target)) return;
   const el = event.target.closest('[data-path]');
-  if (!el || !scrollEl()?.contains(el)) return;
-  dragCandidate = { el, x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+  if (el) {
+    if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+    dragCandidate = { el, x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+    return;
+  }
+  const tab = activeTab();
+  if (!tab || (tab.view !== 'grid' && tab.view !== 'list')) return;
+  if (state.searchResults !== null) return;
+  if (event.target.closest('button, a, input, textarea, select')) return;
+  event.preventDefault();
+  marqueeDrag = {
+    pointerId: event.pointerId,
+    x0: event.clientX,
+    y0: event.clientY,
+    additive: event.ctrlKey || event.metaKey || event.shiftKey,
+    base: new Set(state.selection),
+    active: false,
+    box: null,
+  };
 }
 
 function onPointerMove(event) {
+  if (marqueeDrag && event.pointerId === marqueeDrag.pointerId) {
+    if ((event.buttons & 1) === 0) {
+      endMarquee();
+      return;
+    }
+    const dx = event.clientX - marqueeDrag.x0;
+    const dy = event.clientY - marqueeDrag.y0;
+    if (!marqueeDrag.active) {
+      if (dx * dx + dy * dy < MARQUEE_THRESHOLD * MARQUEE_THRESHOLD) return;
+      marqueeDrag.active = true;
+    }
+    updateMarquee(event.clientX, event.clientY);
+    return;
+  }
   if (!dragCandidate || event.pointerId !== dragCandidate.pointerId) return;
   if ((event.buttons & 1) === 0) {
     dragCandidate = null;
@@ -1698,10 +1811,18 @@ function onPointerMove(event) {
 }
 
 function onPointerUp(event) {
+  if (marqueeDrag && event.pointerId === marqueeDrag.pointerId) {
+    endMarquee();
+    return;
+  }
   if (dragCandidate && event.pointerId === dragCandidate.pointerId) dragCandidate = null;
 }
 
 function onClick(event) {
+  if (suppressEmptyClick) {
+    suppressEmptyClick = false;
+    return;
+  }
   const scroll = scrollEl();
   if (!scroll) return;
   const actionEl = event.target.closest('[data-action]');
@@ -1942,6 +2063,7 @@ export function initFiles() {
     if (event.key === 'Escape') {
       stopDrift();
       stopPanning();
+      cancelMarquee();
     }
   });
   window.addEventListener('pointermove', onPointerMove);
@@ -1958,6 +2080,7 @@ export function initFiles() {
     stopCardVideo(hoverVideoThumb);
     stopDrift();
     stopPanning();
+    cancelMarquee();
   });
   head?.addEventListener('click', onHeadClick);
   chips?.addEventListener('click', onChipsClick);

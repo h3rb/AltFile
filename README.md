@@ -30,6 +30,9 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **Drag files out**: drag any card or list row into another application. Selection is honored (drag a
   selected item to move the whole selection) and the drop carries real files through the native OS drag, so
   apps and file managers receive the files themselves.
+- **Rubber-band selection**: drag in empty grid or list space to select every item the band touches; a drag
+  started in the list's left margin selects whole rows. Hold `Ctrl`, `⌘`, or `Shift` to add the band to the
+  current selection instead of replacing it.
 - **Shortcuts**: `.lnk` files are labeled *Shortcut* everywhere (cards, list, Details) and show a link badge over
   their grid thumbnail, while the thumbnail itself comes from the shell so it reflects the shortcut's target.
 - **Animated GIFs**: GIF cards and the preview pane show a still first-frame thumbnail, then play the original
@@ -247,6 +250,7 @@ the executable at compile time.
 | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` | Grid / list / visualization |
 | `Ctrl+Wheel` | Zoom grid cards / drift-scroll the list |
 | `Ctrl+Middle click` | Toggle list autoscroll (panning) |
+| Drag in empty space | Rubber-band select (hold `Ctrl`, `⌘`, or `Shift` to add to the selection) |
 | `Ctrl+Shift+N` | New folder |
 | `Ctrl+F` or `/` | Focus search |
 | `Tab` | Complete a typed path in the path bar or search |

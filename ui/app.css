@@ -997,6 +997,16 @@ mark {
   overflow: auto;
   scrollbar-gutter: stable;
   outline: none;
+  user-select: none;
+}
+
+.marquee-box {
+  position: fixed;
+  z-index: 1500;
+  border: 1px solid rgba(var(--accent-rgb), 0.65);
+  border-radius: 3px;
+  background: rgba(var(--accent-rgb), 0.1);
+  pointer-events: none;
 }
 
 body.panning,
