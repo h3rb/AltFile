@@ -24,9 +24,22 @@ pub async fn network_computers() -> Vec<NetworkPlace> {
     computers()
 }
 
+/// Phones, cameras and other gadgets linked through the Windows Cross Device service. The
+/// service mirrors each device as a folder under `%USERPROFILE%\CrossDevice`, and the folder is
+/// absent (or empty) when the service is unavailable, so the section disappears with it.
+#[tauri::command]
+pub async fn cross_device_places() -> Vec<NetworkPlace> {
+    devices()
+}
+
 #[cfg(windows)]
 fn scan() -> Vec<NetworkPlace> {
     windows::scan()
+}
+
+#[cfg(windows)]
+fn devices() -> Vec<NetworkPlace> {
+    windows::devices()
 }
 
 #[cfg(windows)]
@@ -36,6 +49,11 @@ fn computers() -> Vec<NetworkPlace> {
 
 #[cfg(not(windows))]
 fn scan() -> Vec<NetworkPlace> {
+    Vec::new()
+}
+
+#[cfg(not(windows))]
+fn devices() -> Vec<NetworkPlace> {
     Vec::new()
 }
 
@@ -415,6 +433,40 @@ mod windows {
         out
     }
 
+    /// One entry per linked device directory; a missing root yields nothing, which hides the
+    /// whole section in the sidebar.
+    fn device_places(root: &std::path::Path) -> Vec<NetworkPlace> {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return Vec::new();
+        };
+        let mut out: Vec<NetworkPlace> = entries
+            .flatten()
+            .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
+            .map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let path = entry.path().to_string_lossy().into_owned();
+                NetworkPlace {
+                    id: format!("xd-{}", path.to_lowercase()),
+                    name,
+                    path,
+                    kind: "device".to_string(),
+                    comment: None,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        out
+    }
+
+    pub fn devices() -> Vec<NetworkPlace> {
+        std::env::var_os("USERPROFILE")
+            .map(std::path::PathBuf::from)
+            .map(|home| home.join("CrossDevice"))
+            .filter(|root| root.is_dir())
+            .map(|root| device_places(&root))
+            .unwrap_or_default()
+    }
+
     fn push(
         out: &mut Vec<NetworkPlace>,
         seen: &mut BTreeSet<String>,
@@ -438,6 +490,24 @@ mod windows {
     #[cfg(test)]
     fn unc_probe(remote: &str) -> Vec<String> {
         unc_parts(remote)
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn lists_cross_device_folders_only() {
+        let root = std::env::temp_dir().join(format!("altfe-crossdevice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("phone")).unwrap();
+        std::fs::create_dir_all(root.join("Camera")).unwrap();
+        std::fs::write(root.join("notes.txt"), b"x").unwrap();
+        let places = device_places(&root);
+        let names: Vec<&str> = places.iter().map(|place| place.name.as_str()).collect();
+        assert_eq!(names, ["Camera", "phone"]);
+        assert_eq!(places[0].kind, "device");
+        assert!(places[0].path.ends_with("Camera"));
+        assert_eq!(places[0].id, format!("xd-{}", places[0].path.to_lowercase()));
+        assert!(device_places(&root.join("missing")).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[cfg(test)]

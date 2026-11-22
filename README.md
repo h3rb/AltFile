@@ -13,6 +13,10 @@ treemap visualization of any folder — and it builds as a portable executable f
   network browse list and the shell Network folder, so it finds machines the other source misses (and
   shares the browse list shows but the shell hides). Entries open the UNC path like any other folder, and
   the refresh icon rescans. The group is hidden on Linux, where there is nothing to enumerate.
+- **Cross Device** appears as a `Cross Device` section under Network on Windows when the Cross Device
+  service is present: linked phones, cameras and other small devices are listed from
+  `%USERPROFILE%\CrossDevice` and open like ordinary folders. When no devices are linked, the section
+  is not shown at all.
 - **Smart thumbnails** generated on demand and cached by content hash (512 MB LRU-style cache):
   - Windows: images (with EXIF orientation), video/audio posters, PDF first pages through the Windows PDF
     renderer, and Office documents and executable icons via the shell.

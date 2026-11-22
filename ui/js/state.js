@@ -6,6 +6,7 @@ export const state = {
   app: null,
   places: [],
   network: null,
+  crossDevice: [],
   tabs: [],
   activeId: null,
   listing: null,

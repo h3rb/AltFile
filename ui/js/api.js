@@ -38,6 +38,7 @@ export const api = {
   listPlaces: () => invoke('list_places'),
   networkPlaces: () => invoke('network_places'),
   networkComputers: () => invoke('network_computers'),
+  crossDevicePlaces: () => invoke('cross_device_places'),
   listDir: (path, showHidden) => invoke('list_dir', { path, showHidden }),
   folderCounts: (path, showHidden) => invoke('folder_counts', { path, showHidden }),
   folderSize: (path, showHidden) => invoke('folder_size', { path, showHidden }),

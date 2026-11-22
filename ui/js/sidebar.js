@@ -159,6 +159,8 @@ export function renderSidebar() {
   const playlistList = document.getElementById('playlist-list');
   const driveList = document.getElementById('drive-list');
   const networkList = document.getElementById('network-list');
+  const crossHeading = document.getElementById('cross-device-heading');
+  const crossList = document.getElementById('cross-device-list');
   const rescanBtn = document.getElementById('rescan-network');
   const settingsBtn = document.getElementById('settings-btn');
   const addBtn = document.getElementById('add-bookmark');
@@ -242,6 +244,23 @@ export function renderSidebar() {
               .join('')
           : '<div class="nav-empty">No shared folders found.</div>';
   }
+
+  const devices = state.crossDevice || [];
+  const showDevices = onWindows && devices.length > 0;
+  crossHeading?.toggleAttribute('hidden', !showDevices);
+  crossList?.toggleAttribute('hidden', !showDevices);
+  if (crossList && showDevices) {
+    crossList.innerHTML = devices
+      .map((device) =>
+        navItem({
+          path: device.path,
+          name: device.name,
+          iconName: 'phone',
+          active: samePath(device.path, current),
+        })
+      )
+      .join('');
+  }
 }
 
 export function isBookmarked(path) {
@@ -323,6 +342,7 @@ export function initSidebar() {
     document.getElementById('playlist-list'),
     document.getElementById('drive-list'),
     document.getElementById('network-list'),
+    document.getElementById('cross-device-list'),
   ];
   roots.forEach((root) => {
     root?.addEventListener('click', onListClick);

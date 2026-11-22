@@ -717,6 +717,19 @@ function toggleSearchScope() {
 
 let networkLoading = false;
 
+async function loadCrossDevice() {
+  if (state.app?.platform !== 'windows') {
+    state.crossDevice = [];
+    return;
+  }
+  try {
+    state.crossDevice = (await api.crossDevicePlaces()) || [];
+  } catch {
+    state.crossDevice = [];
+  }
+  sidebar.renderSidebar();
+}
+
 async function loadNetwork() {
   if (networkLoading) return;
   if (state.app?.platform !== 'windows') {
@@ -1418,7 +1431,10 @@ function assignBridge() {
     extractArchive: ops.extractArchive,
     bookmarkCurrent: sidebar.addBookmarkCurrent,
     renderSidebar: sidebar.renderSidebar,
-    rescanNetwork: loadNetwork,
+    rescanNetwork: () => {
+      loadNetwork().catch(() => {});
+      loadCrossDevice().catch(() => {});
+    },
     openSettings,
     openPalette,
     resetFilters,
@@ -1489,6 +1505,7 @@ async function boot() {
   renderChrome();
   preview.renderPreview();
   loadNetwork().catch(() => {});
+  loadCrossDevice().catch(() => {});
   initUpdates(() => sidebar.renderSidebar());
 
   const ok = await files.refreshFiles();

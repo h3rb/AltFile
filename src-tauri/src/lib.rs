@@ -405,6 +405,7 @@ pub fn run() {
             fsops::list_places,
             network::network_places,
             network::network_computers,
+            network::cross_device_places,
             fsops::open_path,
             fsops::open_url,
             fsops::reveal_path,
