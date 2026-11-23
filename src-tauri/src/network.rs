@@ -10,6 +10,9 @@ pub struct NetworkPlace {
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Only set for Cross Device entries; `None` when the portable-device probe is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connected: Option<bool>,
 }
 
 #[tauri::command]
@@ -69,13 +72,16 @@ mod windows {
     use std::ffi::{c_void, OsStr};
     use std::os::windows::ffi::OsStrExt;
     use std::time::{Duration, Instant};
-    use windows::core::PWSTR;
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Devices::PortableDevices::{
+        IPortableDeviceManager, PortableDeviceManager,
+    };
     use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS, HANDLE, HWND, S_OK};
     use windows::Win32::NetworkManagement::WNet::{
         WNetCloseEnum, WNetEnumResourceW, WNetOpenEnumW, NETRESOURCEW, RESOURCETYPE_DISK,
         RESOURCEUSAGE_ALL, RESOURCEUSAGE_CONNECTABLE, RESOURCEUSAGE_CONTAINER, RESOURCE_GLOBALNET,
     };
-    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
     use windows::Win32::UI::Shell::Common::{ITEMIDLIST, STRRET};
     use windows::Win32::UI::Shell::{
         FOLDERID_NetworkFolder, IEnumIDList, IShellFolder, SHGetDesktopFolder,
@@ -433,9 +439,86 @@ mod windows {
         out
     }
 
+    /// Device folders linger after the Cross Device service loses the gadget, so each name is
+    /// compared against the portable devices Windows reports as attached right now.
+    fn normalize_device_name(name: &str) -> String {
+        name.chars()
+            .filter(|ch| ch.is_alphanumeric())
+            .flat_map(|ch| ch.to_lowercase())
+            .collect()
+    }
+
+    fn name_matches(folder: &str, connected: &[String]) -> bool {
+        let wanted = normalize_device_name(folder);
+        if wanted.is_empty() {
+            return false;
+        }
+        connected.iter().any(|name| {
+            let other = normalize_device_name(name);
+            if other.is_empty() {
+                return false;
+            }
+            other == wanted
+                || (wanted.len() >= 3
+                    && other.len() >= 3
+                    && (other.contains(&wanted) || wanted.contains(&other)))
+        })
+    }
+
+    /// Friendly names of the portable devices attached right now; `None` when the WPD service
+    /// could not be queried, so callers can leave the devices unbadged instead of guessing.
+    fn connected_names() -> Option<Vec<String>> {
+        within(Duration::from_secs(3), probe_names).flatten()
+    }
+
+    fn probe_names() -> Option<Vec<String>> {
+        let com = crate::shellmenu::win::ComGuard::init();
+        if !com.active() {
+            return None;
+        }
+        unsafe {
+            let manager: IPortableDeviceManager =
+                CoCreateInstance(&PortableDeviceManager, None, CLSCTX_INPROC_SERVER).ok()?;
+            let _ = manager.RefreshDeviceList();
+            let mut count = 0u32;
+            manager.GetDevices(std::ptr::null_mut(), &mut count).ok()?;
+            if count == 0 {
+                return Some(Vec::new());
+            }
+            let mut ids = vec![PWSTR::null(); count as usize];
+            let mut written = count;
+            manager.GetDevices(ids.as_mut_ptr(), &mut written).ok()?;
+            let mut out = Vec::new();
+            for id in ids.into_iter().take(written as usize) {
+                if id.is_null() {
+                    continue;
+                }
+                let mut chars = 0u32;
+                let _ = manager.GetDeviceFriendlyName(PCWSTR(id.0), PWSTR::null(), &mut chars);
+                if chars > 0 {
+                    let mut buffer = vec![0u16; chars as usize];
+                    let mut length = chars;
+                    if manager
+                        .GetDeviceFriendlyName(
+                            PCWSTR(id.0),
+                            PWSTR(buffer.as_mut_ptr()),
+                            &mut length,
+                        )
+                        .is_ok()
+                    {
+                        let end = buffer.iter().position(|ch| *ch == 0).unwrap_or(buffer.len());
+                        out.push(String::from_utf16_lossy(&buffer[..end]));
+                    }
+                }
+                CoTaskMemFree(Some(id.0 as *const c_void));
+            }
+            Some(out)
+        }
+    }
+
     /// One entry per linked device directory; a missing root yields nothing, which hides the
     /// whole section in the sidebar.
-    fn device_places(root: &std::path::Path) -> Vec<NetworkPlace> {
+    fn device_places(root: &std::path::Path, connected: Option<&[String]>) -> Vec<NetworkPlace> {
         let Ok(entries) = std::fs::read_dir(root) else {
             return Vec::new();
         };
@@ -447,10 +530,11 @@ mod windows {
                 let path = entry.path().to_string_lossy().into_owned();
                 NetworkPlace {
                     id: format!("xd-{}", path.to_lowercase()),
-                    name,
+                    name: name.clone(),
                     path,
                     kind: "device".to_string(),
                     comment: None,
+                    connected: connected.map(|names| name_matches(&name, names)),
                 }
             })
             .collect();
@@ -459,12 +543,15 @@ mod windows {
     }
 
     pub fn devices() -> Vec<NetworkPlace> {
-        std::env::var_os("USERPROFILE")
+        let Some(root) = std::env::var_os("USERPROFILE")
             .map(std::path::PathBuf::from)
             .map(|home| home.join("CrossDevice"))
             .filter(|root| root.is_dir())
-            .map(|root| device_places(&root))
-            .unwrap_or_default()
+        else {
+            return Vec::new();
+        };
+        let connected = connected_names();
+        device_places(&root, connected.as_deref())
     }
 
     fn push(
@@ -484,6 +571,7 @@ mod windows {
             path,
             kind: kind.to_string(),
             comment: (!comment.trim().is_empty()).then(|| comment.trim().to_string()),
+            connected: None,
         });
     }
 
@@ -495,19 +583,51 @@ mod windows {
     #[cfg(test)]
     #[test]
     fn lists_cross_device_folders_only() {
-        let root = std::env::temp_dir().join(format!("altfe-crossdevice-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("altfe-crossdevice-list-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("phone")).unwrap();
         std::fs::create_dir_all(root.join("Camera")).unwrap();
         std::fs::write(root.join("notes.txt"), b"x").unwrap();
-        let places = device_places(&root);
+        let places = device_places(&root, None);
         let names: Vec<&str> = places.iter().map(|place| place.name.as_str()).collect();
         assert_eq!(names, ["Camera", "phone"]);
         assert_eq!(places[0].kind, "device");
         assert!(places[0].path.ends_with("Camera"));
         assert_eq!(places[0].id, format!("xd-{}", places[0].path.to_lowercase()));
-        assert!(device_places(&root.join("missing")).is_empty());
+        assert_eq!(places[0].connected, None);
+        assert!(device_places(&root.join("missing"), None).is_empty());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn marks_devices_missing_from_the_portable_device_list() {
+        let root =
+            std::env::temp_dir().join(format!("altfe-crossdevice-mark-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("Camera")).unwrap();
+        std::fs::create_dir_all(root.join("Herb's S23")).unwrap();
+        let attached = ["Samsung Herb's S23 (MTP)".to_string()];
+        let places = device_places(&root, Some(&attached));
+        assert_eq!(places[0].name, "Camera");
+        assert_eq!(places[0].connected, Some(false));
+        assert_eq!(places[1].connected, Some(true));
+        let none = device_places(&root, Some(&[]));
+        assert!(none.iter().all(|place| place.connected == Some(false)));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn matches_device_names_loosely() {
+        let attached = vec!["Herb's S23".to_string(), "DSC-RX100".to_string()];
+        assert!(name_matches("Herb's S23", &attached));
+        assert!(name_matches("herbs s23", &attached));
+        assert!(name_matches("Samsung Herb's S23 (MTP)", &attached));
+        assert!(!name_matches("rx", &attached));
+        assert!(!name_matches("Pixel 9", &attached));
+        assert_eq!(normalize_device_name("Herb's S23"), "herbss23");
     }
 
     #[cfg(test)]

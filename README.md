@@ -16,7 +16,11 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **Cross Device** appears as a `Cross Device` section under Network on Windows when the Cross Device
   service is present: linked phones, cameras and other small devices are listed from
   `%USERPROFILE%\CrossDevice` and open like ordinary folders. When no devices are linked, the section
-  is not shown at all.
+  is not shown at all. Device folders linger after unplugging, so the sidebar checks the attached
+  portable devices on a once-a-minute timer (and when the window regains focus) and dims any gadget
+  that is no longer connected, labeling it *Disconnected*. Right-click a disconnected device and choose
+  **Remove from view** to hide it until it reconnects; the entry reappears by itself the next time the
+  device is attached.
 - **Smart thumbnails** generated on demand and cached by content hash (512 MB LRU-style cache):
   - Windows: images (with EXIF orientation), video/audio posters, PDF first pages through the Windows PDF
     renderer, and Office documents and executable icons via the shell.

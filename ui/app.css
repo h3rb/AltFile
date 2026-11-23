@@ -307,6 +307,14 @@ mark {
   color: rgba(var(--accent-rgb), 0.7);
 }
 
+.nav-item.offline {
+  opacity: 0.55;
+}
+
+.nav-item.offline .nav-meta {
+  color: var(--dim);
+}
+
 .nav-item.drop-target {
   background: rgba(var(--accent-rgb), 0.16);
   border-color: rgba(var(--accent-rgb), 0.5);

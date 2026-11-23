@@ -7,6 +7,7 @@ export const state = {
   places: [],
   network: null,
   crossDevice: [],
+  hiddenDevices: [],
   tabs: [],
   activeId: null,
   listing: null,
@@ -155,6 +156,9 @@ export async function loadSession() {
     if (Array.isArray(saved.recent)) {
       state.recent = saved.recent.filter((p) => typeof p === 'string' && p).slice(0, 14);
     }
+    if (Array.isArray(saved.hiddenDevices)) {
+      state.hiddenDevices = saved.hiddenDevices.filter((p) => typeof p === 'string' && p).slice(0, 50);
+    }
     if (Number.isFinite(saved.thumbSize)) {
       state.thumbSize = clamp(saved.thumbSize, 120, 260);
     }
@@ -240,6 +244,7 @@ export function captureSession() {
     activeIndex: Math.max(0, state.tabs.findIndex((tab) => tab.id === state.activeId)),
     bookmarks: state.bookmarks,
     recent: state.recent,
+    hiddenDevices: state.hiddenDevices,
     thumbSize: state.thumbSize,
     folderMediaSort: state.folderMediaSort,
     nestedShare: state.nestedShare,

@@ -717,17 +717,48 @@ function toggleSearchScope() {
 
 let networkLoading = false;
 
+const CROSS_DEVICE_REFRESH_MS = 60_000;
+
+// A removed device is only hidden while it is away; reconnect it and the entry comes back.
+function pruneHiddenDevices(devices) {
+  if (!state.hiddenDevices.length) return;
+  const attached = new Set(
+    devices.filter((device) => device.connected === true).map((device) => normalizePath(device.path))
+  );
+  const kept = state.hiddenDevices.filter((path) => !attached.has(normalizePath(path)));
+  if (kept.length !== state.hiddenDevices.length) {
+    state.hiddenDevices = kept;
+    scheduleSave();
+  }
+}
+
 async function loadCrossDevice() {
   if (state.app?.platform !== 'windows') {
     state.crossDevice = [];
     return;
   }
+  let next = [];
   try {
-    state.crossDevice = (await api.crossDevicePlaces()) || [];
+    next = (await api.crossDevicePlaces()) || [];
   } catch {
-    state.crossDevice = [];
+    next = [];
   }
-  sidebar.renderSidebar();
+  pruneHiddenDevices(next);
+  if (JSON.stringify(next) !== JSON.stringify(state.crossDevice)) {
+    state.crossDevice = next;
+    sidebar.renderSidebar();
+  }
+}
+
+// Device folders linger after unplugging, so re-check attached portable devices on a slow timer
+// and whenever the window comes back, which is when a device was most likely plugged in.
+function watchCrossDevice() {
+  setInterval(() => {
+    if (document.visibilityState === 'visible') loadCrossDevice().catch(() => {});
+  }, CROSS_DEVICE_REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') loadCrossDevice().catch(() => {});
+  });
 }
 
 async function loadNetwork() {
@@ -873,6 +904,8 @@ function backgroundMenu(x, y) {
 }
 
 function navMenu(path, x, y) {
+  const device = (state.crossDevice || []).find((item) => samePath(item.path, path));
+  const dormant = device?.connected === false;
   showMenu({
     x,
     y,
@@ -880,6 +913,13 @@ function navMenu(path, x, y) {
       { label: 'Open', icon: 'folderOpen', onClick: () => navigate(path) },
       { label: 'Open in new tab', icon: 'plus', onClick: () => openTab(path) },
       { label: 'Reveal in file manager', icon: 'external', onClick: () => ops.revealEntry({ path, isDir: true }) },
+      { separator: true, hidden: !dormant },
+      {
+        label: 'Remove from view',
+        icon: 'eyeOff',
+        hidden: !dormant,
+        onClick: () => sidebar.hideCrossDevice(device),
+      },
       { separator: true },
       systemMenuItem(path),
     ],
@@ -1506,6 +1546,7 @@ async function boot() {
   preview.renderPreview();
   loadNetwork().catch(() => {});
   loadCrossDevice().catch(() => {});
+  watchCrossDevice();
   initUpdates(() => sidebar.renderSidebar());
 
   const ok = await files.refreshFiles();

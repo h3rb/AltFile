@@ -1,6 +1,6 @@
 [package]
 name = "altfileexplorer"
-version = "0.2.21"
+version = "0.2.22"
 description = "A fast, dark, keyboard-first file explorer with smart thumbnails and a folder treemap"
 authors = ["h3rb"]
 license = "MIT"
@@ -52,6 +52,7 @@ libc = "0.2"
 windows = { version = "0.62", features = [
     "Data_Pdf",
     "Storage_Streams",
+    "Win32_Devices_PortableDevices",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_NetworkManagement_WNet",

@@ -27,10 +27,10 @@ function activePath() {
   return activeTab()?.path || '';
 }
 
-function navItem({ path, name, meta = '', iconName = 'folder', active = false, removable = false, bookmarkId = '', meter = null, title = '' }) {
+function navItem({ path, name, meta = '', iconName = 'folder', active = false, removable = false, bookmarkId = '', meter = null, title = '', offline = false }) {
   return `
     <div class="drive-wrap">
-      <button class="nav-item${active ? ' active' : ''}" type="button" data-path="${esc(path)}" title="${esc(title || path)}">
+      <button class="nav-item${active ? ' active' : ''}${offline ? ' offline' : ''}" type="button" data-path="${esc(path)}" title="${esc(title || path)}">
         ${icon(iconName, 15)}
         <span class="nav-name">${esc(name)}</span>
         ${meta ? `<span class="nav-meta">${esc(meta)}</span>` : ''}
@@ -245,26 +245,49 @@ export function renderSidebar() {
           : '<div class="nav-empty">No shared folders found.</div>';
   }
 
-  const devices = state.crossDevice || [];
+  const devices = (state.crossDevice || []).filter(
+    (device) => device.connected !== false || !isDeviceHidden(device.path)
+  );
   const showDevices = onWindows && devices.length > 0;
   crossHeading?.toggleAttribute('hidden', !showDevices);
   crossList?.toggleAttribute('hidden', !showDevices);
   if (crossList && showDevices) {
     crossList.innerHTML = devices
-      .map((device) =>
-        navItem({
+      .map((device) => {
+        const offline = device.connected === false;
+        return navItem({
           path: device.path,
           name: device.name,
           iconName: 'phone',
           active: samePath(device.path, current),
-        })
-      )
+          offline,
+          meta: offline ? 'Disconnected' : '',
+          title: offline ? `${device.path} (disconnected)` : device.path,
+        });
+      })
       .join('');
   }
 }
 
 export function isBookmarked(path) {
   return Boolean(path) && state.bookmarks.some((bookmark) => samePath(bookmark.path, path));
+}
+
+function isDeviceHidden(path) {
+  return state.hiddenDevices.some((hidden) => samePath(hidden, path));
+}
+
+export function hideCrossDevice(device) {
+  if (!device?.path) return;
+  if (!isDeviceHidden(device.path)) {
+    state.hiddenDevices.push(device.path);
+  }
+  scheduleSave();
+  renderSidebar();
+  toast(`Removed “${device.name || device.path}” from view until it reconnects`, {
+    type: 'info',
+    icon: 'phone',
+  });
 }
 
 export function addBookmark(path, name) {
