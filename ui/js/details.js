@@ -16,6 +16,15 @@ let observer = null;
 
 const MEDIA_MODES = new Set(['audio', 'video']);
 const ARCHIVE_EXTS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'tbz2', 'tbz']);
+const LEGACY_ARCHIVE_EXTS = new Set(['arc', 'lzh']);
+const DISC_EXTS = new Set(['iso', 'atr', 'xfd', 'di', 'pro', 'dcm', 'dc3', 'dsk', 'atx']);
+const LEGACY_DISC_EXTS = new Set(['atr', 'xfd', 'di', 'pro', 'dcm', 'dc3', 'dsk', 'atx']);
+
+function isDisc(entry) {
+  const ext = (entry.ext || '').toLowerCase();
+  if (!DISC_EXTS.has(ext)) return false;
+  return ext === 'iso' || (entry.kind === 'legacy' && LEGACY_DISC_EXTS.has(ext));
+}
 
 function detailMode(entry) {
   if (entry.isDir) return 'counts';
@@ -24,6 +33,8 @@ function detailMode(entry) {
   if (entry.kind === 'audio') return 'audio';
   if (entry.kind === 'model') return 'mesh';
   if (entry.kind === 'archive' && ARCHIVE_EXTS.has((entry.ext || '').toLowerCase())) return 'archive';
+  if (entry.kind === 'legacy' && LEGACY_ARCHIVE_EXTS.has((entry.ext || '').toLowerCase())) return 'archive';
+  if (isDisc(entry)) return 'disc';
   return '';
 }
 
@@ -115,6 +126,17 @@ async function resolveDetail(job) {
       return {
         html: pair('fileText', summary.files, mark) + pair('folder', summary.folders, mark),
         title: `${summary.format} · ${summary.kind} · ${humanCount(summary.files)} ${summary.files === 1 ? 'file' : 'files'} · ${humanCount(summary.folders)} ${summary.folders === 1 ? 'folder' : 'folders'}${summary.truncated ? ' · partial scan' : ''}`,
+      };
+    }
+    case 'disc': {
+      const summary = await api.discSummary(job.path);
+      if (!summary) return null;
+      const mark = summary.truncated ? '+' : '';
+      return {
+        html: pair('fileText', summary.files, mark) + pair('folder', summary.folders, mark),
+        title: [summary.format, summary.filesystem, summary.label, `${humanCount(summary.files)} ${summary.files === 1 ? 'file' : 'files'}`, `${humanCount(summary.folders)} ${summary.folders === 1 ? 'folder' : 'folders'}`, summary.truncated ? 'partial scan' : '']
+          .filter(Boolean)
+          .join(' · '),
       };
     }
     case 'audio':

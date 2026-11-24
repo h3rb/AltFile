@@ -1,4 +1,4 @@
-use crate::paths;
+use crate::{legacy, paths};
 use ignore::WalkBuilder;
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
@@ -18,6 +18,7 @@ pub struct SearchHit {
     pub modified: u64,
     pub ext: String,
     pub kind: String,
+    pub legacy: Option<String>,
     pub match_range: Option<[usize; 2]>,
 }
 
@@ -217,6 +218,16 @@ fn walk(
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
+        let legacy = if is_dir {
+            None
+        } else {
+            legacy::identify(path, &ext, meta.len()).map(str::to_string)
+        };
+        let kind = if legacy.is_some() {
+            "legacy"
+        } else {
+            paths::classify(&ext, is_dir)
+        };
         scored.push((
             found.score,
             SearchHit {
@@ -229,7 +240,8 @@ fn walk(
                 is_dir,
                 size: if is_dir { 0 } else { meta.len() },
                 modified,
-                kind: paths::classify(&ext, is_dir).to_string(),
+                kind: kind.to_string(),
+                legacy,
                 ext,
                 match_range: found.range,
             },

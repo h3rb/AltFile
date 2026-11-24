@@ -6,7 +6,7 @@ import {
   esc,
   fuzzy,
   basename,
-  kindLabel,
+  entryKindLabel,
   humanSize,
   fmtRelative,
   isPathLike,
@@ -211,7 +211,7 @@ function fileItems() {
   return entries.map((entry) => ({
     group: 'In this folder',
     label: entry.name,
-    sub: `${kindLabel(entry.kind)} · ${entry.isDir ? fmtRelative(entry.modified) : humanSize(entry.size)}`,
+    sub: `${entryKindLabel(entry)} · ${entry.isDir ? fmtRelative(entry.modified) : humanSize(entry.size)}`,
     kind: entry.kind,
     run: () => app.openEntry?.(entry),
   }));

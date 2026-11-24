@@ -19,6 +19,20 @@ pub fn save_png(path: String, data: String) -> Result<(), String> {
     write_png(Path::new(&path), &data)
 }
 
+#[tauri::command]
+pub fn save_bytes(path: String, data: String) -> Result<(), String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|error| format!("The file data was not valid base64: {error}"))?;
+    let target = Path::new(&path);
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(format!("Folder not found: {}", parent.display()));
+        }
+    }
+    std::fs::write(target, bytes).map_err(|error| format!("Could not write {}: {error}", target.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

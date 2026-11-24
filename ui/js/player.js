@@ -4,6 +4,7 @@ import { icon } from './icons.js';
 import { esc, basename, dirname, clamp, fmtDuration, themeColor, uid } from './util.js';
 import { toast, showMenu, confirmDialog } from './dialogs.js';
 import { isMidiPath, renderMidi } from './midi.js';
+import { isTrackerPath, loadTracker } from './tracker.js';
 import { loadSoundfont } from './sf2.js';
 import { shortcutTitle } from './keyboard.js';
 
@@ -34,7 +35,7 @@ let scopePath = null;
 let scopeTriedAt = 0;
 const playbackListeners = new Set();
 let midiToken = 0;
-let midiLoading = false;
+let renderLoading = '';
 
 function current() {
   const index = state.media.index;
@@ -247,7 +248,7 @@ function renderBar() {
   const item = current();
   const playlist = selectedPlaylist();
   ui.name.textContent = item ? item.name : 'Playlist';
-  ui.sub.textContent = midiLoading ? 'Rendering MIDI…' : item ? dirname(item.path) : `${state.media.queue.length} item${state.media.queue.length === 1 ? '' : 's'}`;
+  ui.sub.textContent = renderLoading || (item ? dirname(item.path) : `${state.media.queue.length} item${state.media.queue.length === 1 ? '' : 's'}`);
   ui.count.textContent = String(state.media.queue.length);
   ui.playlistName.textContent = playlist ? playlist.name : 'No playlist';
   ui.playlistPick.title = playlist ? `Playlist: ${playlist.name}` : 'Choose a playlist';
@@ -393,11 +394,11 @@ function playIndex(index, { autoplay = true, user = true, startAt = null } = {})
   notifyPlayback();
 }
 
-function setMidiLoading(value) {
-  midiLoading = value;
+function setMidiLoading(value, label = 'Rendering MIDI…') {
+  renderLoading = value ? label : '';
   if (!ui) return;
   const item = current();
-  ui.sub.textContent = value ? 'Rendering MIDI…' : item ? dirname(item.path) : '';
+  ui.sub.textContent = value ? label : item ? dirname(item.path) : '';
 }
 
 function startEngine(item, autoplay) {
@@ -405,6 +406,11 @@ function startEngine(item, autoplay) {
   if (isMidiPath(item.path)) {
     setMidiLoading(true);
     loadMidiEngine(item, token, autoplay);
+    return;
+  }
+  if (isTrackerPath(item.path)) {
+    setMidiLoading(true, 'Rendering tracker…');
+    loadTrackerEngine(item, token, autoplay);
     return;
   }
   setMidiLoading(false);
@@ -435,6 +441,34 @@ async function loadMidiEngine(item, token, autoplay) {
       }
     }
     const result = await renderMidi(item.path, sf2, sf2Key);
+    if (token !== midiToken) return;
+    engine.src = result.url;
+    engine.load();
+    engine.volume = state.media.volume;
+    engine.muted = state.media.muted;
+    setMidiLoading(false);
+    if (autoplay) {
+      engine.play().catch((error) => {
+        if (error && (error.name === 'AbortError' || error.name === 'NotAllowedError')) return;
+      });
+    } else {
+      updatePlayButton();
+    }
+    notifyPlayback();
+  } catch (error) {
+    if (token !== midiToken) return;
+    setMidiLoading(false);
+    state.media.playing = false;
+    updatePlayButton();
+    if (userInitiated) {
+      toast(`Can't play “${item.name}” — ${String(error?.message || error)}`, { type: 'error' });
+    }
+  }
+}
+
+async function loadTrackerEngine(item, token, autoplay) {
+  try {
+    const result = await loadTracker(item);
     if (token !== midiToken) return;
     engine.src = result.url;
     engine.load();

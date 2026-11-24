@@ -27,6 +27,7 @@ import * as preview from './preview.js';
 import * as player from './player.js';
 import * as viz from './viz.js';
 import * as ops from './ops.js';
+import { initQueue, renderQueue } from './queue.js';
 import * as palette from './palette.js';
 import { openSettings } from './settings.js';
 import { initUpdates } from './updates.js';
@@ -108,17 +109,21 @@ function renderTabs() {
   const root = document.getElementById('tabs');
   if (!root) return;
   root.innerHTML = state.tabs
-    .map(
-      (tab) => `
-        <div class="tab${tab.id === state.activeId ? ' active' : ''}" data-tab-id="${esc(tab.id)}" role="tab" aria-selected="${tab.id === state.activeId}" title="${esc(tab.path)}">
-          ${icon('folder', 13)}
-          <span class="tab-name">${esc(tabLabel(tab.path))}</span>
+    .map((tab) => {
+      const queueTab = tab.kind === 'queue';
+      const label = queueTab ? 'File operations' : tabLabel(tab.path);
+      const title = queueTab ? 'File operation queue' : tab.path;
+      return `
+        <div class="tab${tab.id === state.activeId ? ' active' : ''}" data-tab-id="${esc(tab.id)}" role="tab" aria-selected="${tab.id === state.activeId}" title="${esc(title)}">
+          ${icon(queueTab ? 'clock' : 'folder', 13)}
+          <span class="tab-name">${esc(label)}</span>
           <button class="tab-close" type="button" data-close-tab="${esc(tab.id)}" aria-label="Close tab" title="${esc(shortcutTitle('Close tab', 'closeTab'))}">${icon('x', 11)}</button>
-        </div>`
-    )
+        </div>`;
+    })
     .join('');
 
-  applyWindowTitle(activeTab()?.path);
+  const active = activeTab();
+  applyWindowTitle(active?.kind === 'queue' ? 'File operations' : active?.path);
 }
 
 function renderPathbar() {
@@ -126,6 +131,11 @@ function renderPathbar() {
   const input = document.getElementById('path-input');
   const tab = activeTab();
   if (!crumbs || !tab) return;
+  if (tab.kind === 'queue') {
+    crumbs.innerHTML = '<button class="crumb current" type="button">File operations</button>';
+    if (input) input.value = '';
+    return;
+  }
   const sep = state.app?.sep || (navigator.userAgent.includes('Windows') ? '\\' : '/');
   const parts = splitPath(tab.path, sep);
   const list = parts.length ? parts : [{ label: tab.path, path: tab.path }];
@@ -222,15 +232,21 @@ function updateToolbar() {
 
 function applyView() {
   const tab = activeTab();
+  const queueMode = tab?.kind === 'queue';
   const vizMode = tab?.view === 'viz';
   const filesPane = document.getElementById('files-pane');
   const vizPane = document.getElementById('viz-pane');
   const filterbar = document.getElementById('filterbar');
   const previewPane = document.getElementById('preview-pane');
-  if (filesPane) filesPane.hidden = vizMode;
-  if (vizPane) vizPane.hidden = !vizMode;
-  if (filterbar) filterbar.hidden = vizMode;
-  if (previewPane) previewPane.hidden = vizMode || !state.preview.open;
+  const queuePane = document.getElementById('queue-pane');
+  const toolbar = document.getElementById('toolbar');
+  if (filesPane) filesPane.hidden = vizMode || queueMode;
+  if (vizPane) vizPane.hidden = !vizMode || queueMode;
+  if (filterbar) filterbar.hidden = vizMode || queueMode;
+  if (previewPane) previewPane.hidden = vizMode || queueMode || !state.preview.open;
+  if (queuePane) queuePane.hidden = !queueMode;
+  if (toolbar) toolbar.hidden = queueMode;
+  if (queueMode) renderQueue();
   viz.syncVizWatch();
   updateToolbar();
 }
@@ -241,7 +257,8 @@ function renderChrome() {
   sidebar.renderSidebar();
   files.renderFilters();
   applyView();
-  files.updateStatus();
+  if (activeTab()?.kind === 'queue') renderQueue();
+  else files.updateStatus();
 }
 
 function afterFilesLoaded() {
@@ -262,6 +279,10 @@ async function navigate(path, options = {}) {
   if (!tab) return false;
   const target = String(path || '').trim();
   if (!target) return false;
+  if (tab.kind === 'queue') {
+    await openTab(target, { view: options.view });
+    return true;
+  }
   if (options.newTab) {
     openTab(target, { view: options.view });
     return true;
@@ -346,18 +367,46 @@ async function refreshCurrent() {
   return ok;
 }
 
+function openQueueTab({ activate = true } = {}) {
+  const existing = state.tabs.find((tab) => tab.kind === 'queue');
+  if (existing) {
+    if (activate) activateTab(existing.id);
+    return existing;
+  }
+  const previous = activeTab();
+  if (previous) {
+    const scroll = document.getElementById('files-scroll');
+    previous.scrollTop = scroll?.scrollTop || 0;
+  }
+  const tab = createTab('', { kind: 'queue' });
+  state.tabs.push(tab);
+  if (activate) {
+    state.activeId = tab.id;
+    tab.query = '';
+    state.searchToken += 1;
+    state.searchResults = null;
+    state.searching = false;
+  }
+  renderChrome();
+  scheduleSave();
+  return tab;
+}
+
 async function openTab(path, options = {}) {
   const previous = activeTab();
   if (previous) {
     const scroll = document.getElementById('files-scroll');
     previous.scrollTop = scroll?.scrollTop || 0;
   }
-  const tab = createTab(path || previous?.path || state.app?.home || '/', {
-    view: options.view || previous?.view || 'grid',
-    sort: previous?.sort,
-    filter: previous?.filter || 'all',
-    showHidden: previous?.showHidden || false,
-  });
+  const tab = createTab(
+    path || (previous?.kind === 'queue' ? '' : previous?.path) || state.app?.home || '/',
+    {
+      view: options.view || previous?.view || 'grid',
+      sort: previous?.sort,
+      filter: previous?.filter || 'all',
+      showHidden: previous?.showHidden || false,
+    }
+  );
   state.tabs.push(tab);
   state.activeId = tab.id;
   tab.query = '';
@@ -381,6 +430,17 @@ async function activateTab(id) {
   state.activeId = id;
   const tab = activeTab();
   if (!tab) return;
+  if (tab.kind === 'queue') {
+    tab.query = '';
+    state.searchToken += 1;
+    state.searchResults = null;
+    state.searching = false;
+    syncSearchUi();
+    renderChrome();
+    renderQueue();
+    scheduleSave();
+    return;
+  }
   tab.query = '';
   state.searchToken += 1;
   state.searchResults = null;
@@ -409,7 +469,7 @@ async function closeTab(id) {
     state.activeId = next.id;
     state.searchResults = null;
     state.searching = false;
-    await files.refreshFiles();
+    if (next.kind !== 'queue') await files.refreshFiles();
   }
   renderChrome();
   scheduleSave();
@@ -853,6 +913,7 @@ function moreMenuItems() {
     { label: 'Bookmark this folder', icon: 'bookmark', onClick: () => sidebar.addBookmarkCurrent() },
     { label: 'Copy current path', icon: 'copy', onClick: () => ops.copyEntryPaths([{ path: tab.path, name: tabLabel(tab.path) }]) },
     { separator: true },
+    { label: 'File operations', icon: 'clock', onClick: () => openQueueTab() },
     { label: 'Command palette', icon: 'command', shortcut: shortcutLabel('palette'), onClick: () => openPalette() },
     { label: 'Settings', icon: 'settings', onClick: () => openSettings() },
   ];
@@ -1502,6 +1563,7 @@ function assignBridge() {
         () => toast('Copied to clipboard', { type: 'success', icon: 'copy' }),
         (error) => toast(String(error), { type: 'error' })
       ),
+    openQueueTab,
     onFilesLoaded: afterFilesLoaded,
     onSelectionChange: () => {
       preview.refreshPreviewSoon();
@@ -1540,6 +1602,7 @@ async function boot() {
   viz.initViz();
   initTerminal();
   ops.initOps();
+  initQueue();
   bindStaticEvents();
   listenFilesystem();
   renderChrome();

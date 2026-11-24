@@ -29,6 +29,8 @@ fn mime_for(ext: &str) -> &'static str {
         "wma" => "audio/x-ms-wma",
         "mid" | "midi" | "rmi" | "kar" => "audio/midi",
         "aiff" => "audio/aiff",
+        "mod" | "stm" | "s3m" | "s3z" | "s3t" | "s3i" | "xm" | "xmz" | "it" | "itz" | "mptm"
+        | "mptmz" | "mdz" => "application/octet-stream",
         "sf2" => "application/octet-stream",
         "gif" => "image/gif",
         _ => "application/octet-stream",

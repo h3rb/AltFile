@@ -3,7 +3,7 @@ import { state, activeTab, app, scheduleSave } from './state.js';
 import { openModal, confirmDialog, toast } from './dialogs.js';
 import { icon } from './icons.js';
 import { applyThemeHue, esc, humanSize, humanCount, clamp, debounce } from './util.js';
-import { renderFiles } from './files.js';
+import { refreshFiles, renderFiles, setFilter } from './files.js';
 import { setModelSpin } from './model.js';
 import { setLoop, setActiveSoundFont, soundfontLabel } from './player.js';
 import { renderViz, refreshViz } from './viz.js';
@@ -305,6 +305,15 @@ function settingsHtml() {
       </div>
       <div class="setting-row">
         <div class="setting-main">
+          <div class="setting-label">Support Legacy File Formats</div>
+          <div class="setting-desc">Natively display and test for files that match MS-DOS, Amiga, Commodore, Atari and other less common legacy formats.</div>
+        </div>
+        <div class="setting-control">
+          <input type="checkbox" id="settings-support-legacy"${state.supportLegacy ? ' checked' : ''}>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-main">
           <div class="setting-label">Session restore</div>
           <div class="setting-desc">Tabs, bookmarks, recent folders and preferences are saved automatically.</div>
         </div>
@@ -539,6 +548,13 @@ export function openSettings() {
 
   body.querySelector('#settings-hidden')?.addEventListener('change', (event) => {
     app.setShowHidden?.(event.target.checked);
+  });
+
+  body.querySelector('#settings-support-legacy')?.addEventListener('change', (event) => {
+    state.supportLegacy = event.target.checked;
+    if (!state.supportLegacy && activeTab()?.filter === 'legacy') setFilter('all');
+    scheduleSave();
+    refreshFiles();
   });
 
   body.querySelector('#settings-search-recursive')?.addEventListener('change', (event) => {

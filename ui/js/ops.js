@@ -6,8 +6,8 @@ import {
   refreshFiles,
   selectPath,
 } from './files.js';
-import { promptDialog, extractDialog, confirmDialog, openModal, toast, dismiss } from './dialogs.js';
-import { esc, basename, dirname, joinPath, humanSize, humanCount, fmtFullDate, kindLabel } from './util.js';
+import { promptDialog, extractDialog, confirmDialog, openModal, toast } from './dialogs.js';
+import { esc, basename, dirname, joinPath, humanSize, humanCount, fmtFullDate, entryKindLabel } from './util.js';
 
 function targetEntries(entries) {
   if (entries && entries.length) return entries;
@@ -25,6 +25,80 @@ function samePath(a, b) {
 
 function multipleLabel(entries) {
   return `${humanCount(entries.length)} ${entries.length === 1 ? 'item' : 'items'}`;
+}
+
+const queue = [];
+const queueListeners = new Set();
+let queueSeq = 0;
+let queueRunning = false;
+let queueActive = null;
+
+export function queueItems() {
+  return queue;
+}
+
+export function onQueueChange(listener) {
+  queueListeners.add(listener);
+  return () => queueListeners.delete(listener);
+}
+
+function emitQueue() {
+  for (const listener of queueListeners) {
+    try {
+      listener();
+    } catch {
+      /* a queue view must not break the operation */
+    }
+  }
+}
+
+export function clearFinishedOps() {
+  for (let i = queue.length - 1; i >= 0; i -= 1) {
+    if (queue[i].status === 'done' || queue[i].status === 'error') queue.splice(i, 1);
+  }
+  emitQueue();
+}
+
+function enqueue(spec) {
+  const item = {
+    id: ++queueSeq,
+    done: 0,
+    total: spec.total || 0,
+    current: '',
+    error: '',
+    startedAt: 0,
+    finishedAt: 0,
+    ...spec,
+    status: 'queued',
+  };
+  queue.push(item);
+  emitQueue();
+  app.openQueueTab?.({ activate: false });
+  pumpQueue();
+  return item;
+}
+
+async function pumpQueue() {
+  if (queueRunning) return;
+  const next = queue.find((item) => item.status === 'queued');
+  if (!next) return;
+  queueRunning = true;
+  queueActive = next;
+  next.status = 'running';
+  next.startedAt = Date.now();
+  emitQueue();
+  try {
+    await next.run(next);
+    next.status = 'done';
+  } catch (error) {
+    next.status = 'error';
+    next.error = String(error?.message || error);
+  }
+  next.finishedAt = Date.now();
+  queueActive = null;
+  queueRunning = false;
+  emitQueue();
+  pumpQueue();
 }
 
 export async function newFolder() {
@@ -88,16 +162,20 @@ export async function removeEntries(entries) {
     danger: true,
   });
   if (!confirmed) return;
-  try {
-    const result = await api.deletePaths(list.map((entry) => entry.path));
-    toast(`Moved ${humanCount(result.done)} ${result.done === 1 ? 'item' : 'items'} to the Trash`, {
-      type: 'success',
-      icon: 'trash',
-    });
-    await refreshFiles({ silent: true });
-  } catch (error) {
-    toast(String(error), { type: 'error' });
-  }
+  enqueue({
+    kind: 'delete',
+    title: `Move ${multipleLabel(list)} to Trash`,
+    detail: list.length === 1 ? list[0].path : dirname(list[0].path),
+    total: list.length,
+    run: async () => {
+      const result = await api.deletePaths(list.map((entry) => entry.path));
+      toast(`Moved ${humanCount(result.done)} ${result.done === 1 ? 'item' : 'items'} to the Trash`, {
+        type: 'success',
+        icon: 'trash',
+      });
+      await refreshFiles({ silent: true });
+    },
+  });
 }
 
 const ARCHIVE_SUFFIXES = ['.tar.gz', '.tar.bz2', '.tgz', '.tbz2', '.tbz'];
@@ -121,25 +199,26 @@ export async function extractArchive(entry) {
   const target = await extractDialog({ name, value: defaultExtractTarget(entry) });
   if (!target) return;
 
-  toast(`Extracting “${name}”…`, { id: 'extract', type: 'busy', timeout: 0, icon: 'loader' });
-  try {
-    const dest = await api.extractArchive(entry.path, target);
-    dismiss('toast-extract');
-    const tab = activeTab();
-    if (tab && samePath(dirname(dest), tab.path)) {
-      await refreshFiles({ silent: true });
-      selectPath(dest);
-    }
-    toast(`Extracted to “${basename(dest)}”`, {
-      type: 'success',
-      icon: 'archive',
-      timeout: 6500,
-      action: { label: 'Open', onClick: () => app.navigate?.(dest) },
-    });
-  } catch (error) {
-    dismiss('toast-extract');
-    toast(String(error), { type: 'error' });
-  }
+  enqueue({
+    kind: 'extract',
+    title: `Extract “${name}”`,
+    detail: target,
+    total: 1,
+    run: async () => {
+      const dest = await api.extractArchive(entry.path, target);
+      const tab = activeTab();
+      if (tab && samePath(dirname(dest), tab.path)) {
+        await refreshFiles({ silent: true });
+        selectPath(dest);
+      }
+      toast(`Extracted to “${basename(dest)}”`, {
+        type: 'success',
+        icon: 'archive',
+        timeout: 6500,
+        action: { label: 'Open', onClick: () => app.navigate?.(dest) },
+      });
+    },
+  });
 }
 
 export function copySelection(cut = false, entries = null) {
@@ -175,28 +254,29 @@ export async function pasteInto(destDir) {
 
   const verb = clip.cut ? 'Moving' : 'Copying';
   const pastVerb = clip.cut ? 'Moved' : 'Copied';
-  toast(`${verb} ${multipleLabel(sources)}…`, { id: 'op', type: 'busy', timeout: 0, icon: 'loader' });
-  try {
-    const result = await api.copyPaths(sources, dest, clip.cut);
-    dismiss('toast-op');
-    if (result.errors && result.errors.length) {
-      toast(`${pastVerb} ${humanCount(result.done)}; ${result.errors.length} failed — ${result.errors[0]}`, {
-        type: 'warn',
-        timeout: 6500,
-        icon: 'alert',
-      });
-    } else {
-      toast(`${pastVerb} ${humanCount(result.done)} ${result.done === 1 ? 'item' : 'items'} here`, {
-        type: 'success',
-        icon: clip.cut ? 'cut' : 'copy',
-      });
-    }
-    if (clip.cut && result.done > 0) state.clipboard = { paths: [], cut: false };
-    if (samePath(dest, tab?.path)) await refreshFiles({ silent: true });
-  } catch (error) {
-    dismiss('toast-op');
-    toast(String(error), { type: 'error' });
-  }
+  enqueue({
+    kind: clip.cut ? 'move' : 'copy',
+    title: `${verb} ${multipleLabel(sources)}`,
+    detail: dest,
+    total: sources.length,
+    run: async () => {
+      const result = await api.copyPaths(sources, dest, clip.cut);
+      if (result.errors && result.errors.length) {
+        toast(`${pastVerb} ${humanCount(result.done)}; ${result.errors.length} failed — ${result.errors[0]}`, {
+          type: 'warn',
+          timeout: 6500,
+          icon: 'alert',
+        });
+      } else {
+        toast(`${pastVerb} ${humanCount(result.done)} ${result.done === 1 ? 'item' : 'items'} here`, {
+          type: 'success',
+          icon: clip.cut ? 'cut' : 'copy',
+        });
+      }
+      if (clip.cut && result.done > 0) state.clipboard = { paths: [], cut: false };
+      if (samePath(dest, tab?.path)) await refreshFiles({ silent: true });
+    },
+  });
 }
 
 export function pasteIntoCurrent() {
@@ -243,7 +323,7 @@ export async function showProperties(entry) {
   }
 
   const rows = [
-    ['Kind', `${kindLabel(info.kind)}${info.ext ? ` (.${info.ext})` : ''}`],
+    ['Kind', `${entryKindLabel(info)}${info.ext ? ` (.${info.ext})` : ''}`],
     ['Location', dirname(info.path)],
     ['Size', info.isDir ? (info.entryCount != null ? `${humanCount(info.entryCount)} ${info.entryCount === 1 ? 'item' : 'items'}` : 'Folder') : humanSize(info.size)],
     ['Modified', fmtFullDate(info.modified)],
@@ -287,17 +367,11 @@ export async function showProperties(entry) {
 }
 
 function onProgress(payload) {
-  const el = document.getElementById('toast-op');
-  if (!el || !payload) return;
-  const verb = payload.op === 'move' ? 'Moving' : 'Copying';
-  const current = payload.current ? basename(payload.current) : '';
-  const suffix = current ? ` → ${current}` : '';
-  toast(`${verb} ${humanCount(payload.done)} file${payload.done === 1 ? '' : 's'}${suffix}…`, {
-    id: 'op',
-    type: 'busy',
-    timeout: 0,
-    icon: 'loader',
-  });
+  if (!payload || !queueActive) return;
+  if (queueActive.kind !== 'copy' && queueActive.kind !== 'move') return;
+  queueActive.done = payload.done || 0;
+  queueActive.current = payload.current || '';
+  emitQueue();
 }
 
 export function initOps() {

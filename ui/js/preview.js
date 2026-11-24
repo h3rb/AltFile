@@ -6,7 +6,10 @@ import {
   wantsThumb,
   isGifEntry,
   archiveSupported,
+  archiveListable,
   archiveSummaryFor,
+  discSupported,
+  discSummaryFor,
   folderMosaicFor,
 } from './files.js';
 import { packMosaic, mosaicHtml } from './mosaic.js';
@@ -15,17 +18,22 @@ import { playEntry, addToPlaylist, onPlayback, seekPlayback, isLooping, setLoop,
 import { fontTileHtml, observeFontTiles } from './fonts.js';
 import { isSoundfontEntry, soundfontTileHtml, observeSoundfontTiles, soundfontMeta, loadSoundfont } from './sf2.js';
 import { isMidiPath, renderMidi } from './midi.js';
+import { isTrackerPath, loadTracker, trackerKindLabel, auditionTrackerSample } from './tracker.js';
+import { noteName } from './tracker-formats.js';
+import { EXPORT_FORMATS, exportFileName, quickExportPath, writeSample } from './tracker-export.js';
+import { openModal, showMenu, toast } from './dialogs.js';
 import { wireModelPreview, stopModelPreview, isRotatableModel } from './model.js';
 import { loadWave, drawWaveform } from './waveform.js';
 import {
   esc,
   basename,
   dirname,
+  joinPath,
   humanSize,
   humanCount,
   fmtFullDate,
   fmtDuration,
-  kindLabel,
+  entryKindLabel,
   kindColor,
   themeColor,
   isTextEntry,
@@ -159,7 +167,23 @@ function audioMediaHtml(entry, info) {
       </div>
       <div class="audio-strip">
         <span class="audio-length" data-audio-length>—</span>
-        <span class="audio-format">${esc((info.ext || 'audio').toUpperCase())} · ${esc(kindLabel(info.kind))}</span>
+        <span class="audio-format">${esc((info.ext || 'audio').toUpperCase())} · ${esc(entryKindLabel(info))}</span>
+      </div>
+    </div>`;
+}
+
+function trackerMediaHtml(entry, info) {
+  const label = trackerKindLabel(entry.path);
+  return `
+    <div class="audio-preview is-tracker" data-tracker-preview>
+      <div class="audio-wave-wrap">
+        <canvas class="audio-wave tracker-grid" tabindex="0" role="img" aria-label="Tracker pattern grid"></canvas>
+        <div class="audio-wave-state" data-audio-state>${icon('loader', 13, 'spin')} Rendering tracker…</div>
+      </div>
+      <div class="audio-strip">
+        <span class="audio-length" data-audio-length>—</span>
+        <span class="audio-pos" data-tracker-pos hidden></span>
+        <span class="audio-format">${esc((info.ext || 'mod').toUpperCase())} · ${esc(label)}</span>
       </div>
     </div>`;
 }
@@ -185,7 +209,7 @@ function videoMediaHtml(entry, info, thumb) {
 function archivePreviewHtml(summary) {
   const head = `
       <div class="archive-prev-head">
-        <span class="archive-prev-format">${icon('archive', 13)}${esc(summary.format)}</span>
+        <span class="archive-prev-format">${icon(summary.filesystem ? 'disc' : 'archive', 13)}${esc(summary.format)}</span>
         <span class="archive-prev-kind">${esc(summary.kind)}</span>
       </div>`;
   if (summary.locked) {
@@ -222,7 +246,7 @@ function archivePreviewHtml(summary) {
 }
 
 function modelMediaHtml(entry, info, thumb) {
-  const badge = `${kindLabel(info.kind)}${info.ext ? ` · ${info.ext.toUpperCase()}` : ''}`;
+  const badge = `${entryKindLabel(info)}${info.ext ? ` · ${info.ext.toUpperCase()}` : ''}`;
   const poster = thumb && thumb.url ? `<img class="model-poster" src="${esc(thumb.url)}" alt="">` : '';
   return `
     <div class="preview-media model-preview">
@@ -258,13 +282,15 @@ function mediaHtml(entry, thumb, info, archive, mosaic) {
     if (mosaic && mosaic.items.length) return folderMosaicPreviewHtml(mosaic);
     return `<div class="preview-media">${kindTile(entry)}</div>`;
   }
-  if (info.kind === 'audio') return audioMediaHtml(entry, info);
+  if (info.kind === 'audio') {
+    return isTrackerPath(entry.path) ? trackerMediaHtml(entry, info) : audioMediaHtml(entry, info);
+  }
   if (info.kind === 'video') return videoMediaHtml(entry, info, thumb);
   if (isSoundfontEntry(entry)) return soundfontMediaHtml(entry);
   const font = fontTileHtml(entry, { large: true });
   if (font) return `<div class="preview-media">${font}</div>`;
   if (isRotatableModel(info)) return modelMediaHtml(entry, info, thumb);
-  const badge = `${kindLabel(info.kind)}${info.ext ? ` · ${info.ext.toUpperCase()}` : ''}`;
+  const badge = `${entryKindLabel(info)}${info.ext ? ` · ${info.ext.toUpperCase()}` : ''}`;
   if (thumb && thumb.url) {
     const gif = isGifEntry(entry);
     return `
@@ -315,9 +341,15 @@ function subjectHtml(entry, info, thumb, text, archive, mosaic) {
   const media = !info.isDir && MEDIA_KINDS.has(info.kind);
   const scene = !info.isDir && (info.ext || '').toLowerCase() === '3mf';
   const soundfont = !info.isDir && isSoundfontEntry(entry);
+  const tracker = !info.isDir && isTrackerPath(entry.path);
 
   const meta = [
-    metaRow('Type', `${kindLabel(info.kind)}${info.ext ? ` (.${info.ext})` : ''}`),
+    metaRow('Type', `${entryKindLabel(info)}${info.ext ? ` (.${info.ext})` : ''}`),
+    tracker ? metaRowField('Title', 'trackTitle') : '',
+    tracker ? metaRowField('Tracker', 'trackerName') : '',
+    tracker ? metaRowField('Orders', 'trackerOrders') : '',
+    tracker ? metaRowField('Patterns', 'trackerPatterns') : '',
+    tracker ? metaRowField('Samples', 'trackerSamples') : '',
     scene ? metaRowField('Title', 'modelTitle') : '',
     scene ? metaRowField('Designer', 'designer') : '',
     scene ? metaRowField('Slicer', 'application') : '',
@@ -339,6 +371,8 @@ function subjectHtml(entry, info, thumb, text, archive, mosaic) {
     metaRow('Size', sizeLabel),
     archive && !archive.locked ? metaRow('Contents', `${humanCount(archive.files)} ${archive.files === 1 ? 'file' : 'files'} · ${humanCount(archive.folders)} ${archive.folders === 1 ? 'folder' : 'folders'}`) : '',
     archive ? metaRow('Content type', archive.kind) : '',
+    archive && archive.filesystem ? metaRow('Filesystem', archive.filesystem) : '',
+    archive && archive.label ? metaRow('Volume', archive.label) : '',
     archive && archive.locked ? metaRow('Protection', 'Password required') : '',
     metaRow('Modified', fmtFullDate(info.modified)),
     metaRow('Created', info.created ? fmtFullDate(info.created) : ''),
@@ -364,9 +398,10 @@ function subjectHtml(entry, info, thumb, text, archive, mosaic) {
     ${showMedia ? mediaHtml(entry, thumb, info, archive, mosaic) : ''}
     <div class="preview-title">${esc(info.name || entry.name)}</div>
     <div class="preview-sub">${esc(dirname(info.path) || info.path)}</div>
+    <div class="preview-actions">${actionsHtml(entry, info)}</div>
+    ${tracker ? '<div class="sound-bank" data-sound-bank hidden></div>' : ''}
     ${textBlock}
-    <div class="meta-list">${meta}</div>
-    <div class="preview-actions">${actionsHtml(entry, info)}</div>`;
+    <div class="meta-list">${meta}</div>`;
 }
 
 function skeletonHtml(entry) {
@@ -408,6 +443,7 @@ function teardownMedia(container) {
   stopModelPreview();
   stopPlaybackMirror?.();
   stopPlaybackMirror = null;
+  stopAudition();
   for (const video of container.querySelectorAll('video')) {
     try {
       video.pause();
@@ -417,6 +453,186 @@ function teardownMedia(container) {
       /* detached element */
     }
   }
+}
+
+let audition = null;
+let auditionToken = 0;
+
+function stopAudition() {
+  auditionToken += 1;
+  if (!audition) return;
+  const { audio, url, row } = audition;
+  audition = null;
+  try {
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+  } catch {
+    /* no source yet */
+  }
+  URL.revokeObjectURL(url);
+  row.classList.remove('is-playing');
+  row.querySelector('.sb-play').innerHTML = icon('play', 11);
+}
+
+function sampleLength(frames, rate) {
+  const seconds = frames / rate;
+  if (!Number.isFinite(seconds)) return '—';
+  if (seconds < 10) return `${seconds.toFixed(seconds < 1 ? 2 : 1)} s`;
+  return fmtDuration(seconds);
+}
+
+function fillSoundBank(el, entry, result) {
+  stopAudition();
+  const bank = result.bank || [];
+  if (!bank.length) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  el.innerHTML = `
+    <div class="sb-head"><span>Sound bank</span><span class="sb-count">${bank.length} ${bank.length === 1 ? 'sample' : 'samples'}</span></div>
+    <div class="sb-list">
+      ${bank
+        .map(
+          (s, i) => `
+        <button type="button" class="sb-row" data-bank-index="${i}" title="Play ${esc(s.name)} once">
+          <span class="sb-play">${icon('play', 11)}</span>
+          <span class="sb-name">${esc(s.name)}</span>
+          <span class="sb-len">${sampleLength(s.frames, s.rate)}</span>
+        </button>`
+        )
+        .join('')}
+    </div>`;
+  el.hidden = false;
+
+  const audio = new Audio();
+  audio.addEventListener('ended', () => {
+    if (audition && audition.audio === audio) stopAudition();
+  });
+
+  el.addEventListener('contextmenu', (event) => {
+    const row = event.target.closest('.sb-row');
+    if (!row || !el.contains(row)) return;
+    event.preventDefault();
+    const index = Number(row.dataset.bankIndex);
+    const sample = bank[index];
+    if (sample) openSampleMenu(event, entry, sample, index);
+  });
+
+  el.addEventListener('click', async (event) => {
+    const row = event.target.closest('.sb-row');
+    if (!row || !el.contains(row)) return;
+    if (audition && audition.row === row) {
+      stopAudition();
+      return;
+    }
+    stopAudition();
+    const token = auditionToken;
+    const index = Number(row.dataset.bankIndex);
+    let clip = null;
+    try {
+      clip = await auditionTrackerSample(entry, index);
+    } catch {
+      clip = null;
+    }
+    if (!clip) return;
+    if (token !== auditionToken || !row.isConnected) {
+      URL.revokeObjectURL(clip.url);
+      return;
+    }
+    audition = { audio, url: clip.url, row };
+    row.classList.add('is-playing');
+    row.querySelector('.sb-play').innerHTML = icon('pause', 11);
+    audio.src = clip.url;
+    audio.play().catch(() => {
+      if (audition && audition.row === row) stopAudition();
+    });
+  });
+}
+
+function formatLabel(format) {
+  return EXPORT_FORMATS.find((item) => item.ext === format)?.label || format.toUpperCase();
+}
+
+async function exportSampleAs(entry, sample, index, format) {
+  const name = exportFileName(entry.path, index, format);
+  let target = null;
+  try {
+    target = await api.saveFileDialog({
+      title: 'Export sample as',
+      defaultPath: joinPath(dirname(entry.path), name),
+      filters: [{ name: formatLabel(format), extensions: [format] }],
+    });
+  } catch (error) {
+    toast(String(error), { type: 'error' });
+    return false;
+  }
+  if (!target) return false;
+  try {
+    const bytes = await writeSample(sample, format, target);
+    toast(`Exported ${basename(target)} · ${humanSize(bytes)}`, { type: 'success' });
+    return true;
+  } catch (error) {
+    toast(String(error?.message || error), { type: 'error' });
+    return false;
+  }
+}
+
+async function quickExportSample(entry, sample, index, format) {
+  const target = quickExportPath(entry.path, index, format);
+  try {
+    const bytes = await writeSample(sample, format, target);
+    toast(`Exported ${basename(target)} · ${humanSize(bytes)}`, { type: 'success' });
+  } catch (error) {
+    toast(String(error?.message || error), { type: 'error' });
+  }
+}
+
+function openSampleExportDialog(entry, sample, index) {
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <label class="field">
+      <span>Format</span>
+      <select class="select" data-autofocus>
+        ${EXPORT_FORMATS.map((item) => `<option value="${item.ext}">${esc(item.label)}</option>`).join('')}
+      </select>
+    </label>
+    <p class="field-hint">Rendered from the original sample at ${Math.round(sample.rate)} Hz and saved where you choose.</p>
+  `;
+  openModal({
+    title: 'Export sample',
+    subtitle: sample.name,
+    body,
+    width: 440,
+    actions: [
+      { label: 'Cancel', kind: 'ghost' },
+      {
+        label: 'Export…',
+        kind: 'primary',
+        onClick: ({ body: content }) =>
+          exportSampleAs(entry, sample, index, content.querySelector('select').value),
+      },
+    ],
+  });
+}
+
+function openSampleMenu(event, entry, sample, index) {
+  showMenu({
+    x: event.clientX,
+    y: event.clientY,
+    items: [
+      { label: 'Export as…', icon: 'download', onClick: () => openSampleExportDialog(entry, sample, index) },
+      {
+        label: 'Quick Export',
+        icon: 'archive',
+        submenu: EXPORT_FORMATS.map((item) => ({
+          label: item.label,
+          onClick: () => quickExportSample(entry, sample, index, item.ext),
+        })),
+      },
+    ],
+  });
 }
 
 function probeDuration(entry, onReady) {
@@ -434,15 +650,169 @@ function probeDuration(entry, onReady) {
   probe.src = mediaUrl(entry.path);
 }
 
+const TRACKER_ROW_H = 12;
+const TRACKER_HEADER_H = 15;
+const TRACKER_GUTTER = 28;
+const TRACKER_CHAN_W = 56;
+
+function trackerGeometry(canvas) {
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  return {
+    width,
+    height,
+    rows: Math.max(1, Math.floor((height - TRACKER_HEADER_H) / TRACKER_ROW_H)),
+    visibleChannels: Math.max(1, Math.floor((width - TRACKER_GUTTER) / TRACKER_CHAN_W)),
+  };
+}
+
+function trackerSnapshot(song, time) {
+  const refs = song.rowRefs;
+  if (!refs || !refs.length) return { index: 0, order: 0, row: 0 };
+  let lo = 0;
+  let hi = refs.length - 1;
+  let best = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (refs[mid].time <= time) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return { index: best, order: refs[best].order, row: refs[best].row };
+}
+
+function findTrackerRow(song, order, row, fromIndex) {
+  const refs = song.rowRefs || [];
+  for (let i = Math.max(0, fromIndex); i < refs.length; i += 1) {
+    if (refs[i].order === order && refs[i].row === row) return refs[i];
+  }
+  for (let i = 0; i < refs.length; i += 1) {
+    if (refs[i].order === order && refs[i].row === row) return refs[i];
+  }
+  return null;
+}
+
+function drawTrackerGrid(canvas, result, view) {
+  const geometry = trackerGeometry(canvas);
+  if (!geometry.width || !geometry.height) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(geometry.width * dpr) || canvas.height !== Math.round(geometry.height * dpr)) {
+    canvas.width = Math.round(geometry.width * dpr);
+    canvas.height = Math.round(geometry.height * dpr);
+  }
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, geometry.width, geometry.height);
+
+  const song = result.song;
+  const snap = trackerSnapshot(song, view.time);
+  view.snap = snap;
+  if (view.cursorOrder == null) {
+    view.cursorOrder = snap.order;
+    view.cursorRow = snap.row;
+  }
+  const order = view.playing ? snap.order : view.cursorOrder;
+  const row = view.playing ? snap.row : view.cursorRow;
+  view.order = order;
+  view.row = row;
+  const patternIndex = song.orders[order];
+  const pattern = patternIndex != null ? song.patterns[patternIndex] : null;
+  const channelsLen = pattern ? pattern.channelsLen || song.channels : song.channels;
+  const channels = Math.min(pattern ? channelsLen : song.channels, song.channels, 64);
+  const shownChannels = Math.min(channels, geometry.visibleChannels);
+  const totalRows = pattern ? pattern.rows : 64;
+  const start = clamp(row - Math.floor(geometry.rows / 2), 0, Math.max(0, totalRows - geometry.rows));
+  view.start = start;
+  view.shownChannels = shownChannels;
+
+  const font = '9px monospace';
+  ctx.fillStyle = '#070b10';
+  ctx.fillRect(0, 0, geometry.width, geometry.height);
+
+  ctx.fillStyle = 'rgba(120, 145, 170, 0.08)';
+  ctx.fillRect(0, 0, geometry.width, TRACKER_HEADER_H);
+  ctx.font = '8.5px monospace';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(160, 180, 200, 0.55)';
+  ctx.fillText('ORD ROW', 4, TRACKER_HEADER_H / 2);
+  for (let ch = 0; ch < shownChannels; ch += 1) {
+    const x = TRACKER_GUTTER + ch * TRACKER_CHAN_W + TRACKER_CHAN_W / 2;
+    ctx.fillText(String(ch + 1).padStart(2, '0'), x, TRACKER_HEADER_H / 2);
+  }
+
+  ctx.font = font;
+  for (let r = 0; r < geometry.rows; r += 1) {
+    const row = start + r;
+    if (row >= totalRows) break;
+    const y = TRACKER_HEADER_H + r * TRACKER_ROW_H;
+    if (row % 16 === 0) {
+      ctx.fillStyle = 'rgba(120, 145, 170, 0.07)';
+      ctx.fillRect(0, y, geometry.width, TRACKER_ROW_H);
+    } else if (row % 4 === 0) {
+      ctx.fillStyle = 'rgba(120, 145, 170, 0.035)';
+      ctx.fillRect(0, y, geometry.width, TRACKER_ROW_H);
+    }
+    if (row === view.row) {
+      const tint = view.playing ? 'rgba(77, 163, 255, ' : 'rgba(163, 230, 53, ';
+      ctx.fillStyle = `${tint}0.16)`;
+      ctx.fillRect(0, y, geometry.width, TRACKER_ROW_H);
+      ctx.fillStyle = `${tint}0.9)`;
+      ctx.fillRect(0, y, 2, TRACKER_ROW_H);
+    }
+    ctx.fillStyle = 'rgba(150, 170, 190, 0.45)';
+    ctx.fillText(row.toString(16).toUpperCase().padStart(2, '0'), 4, y + TRACKER_ROW_H / 2);
+    ctx.fillStyle = 'rgba(110, 135, 160, 0.35)';
+    ctx.fillText(String(order + 1).padStart(2, '0'), 20, y + TRACKER_ROW_H / 2);
+    if (!pattern) continue;
+    for (let ch = 0; ch < shownChannels; ch += 1) {
+      const cell = pattern.cells[row * channelsLen + ch];
+      const x = TRACKER_GUTTER + ch * TRACKER_CHAN_W;
+      const midY = y + TRACKER_ROW_H / 2;
+      const hasNote = cell && cell.note >= 0 && cell.note < 254;
+      ctx.fillStyle = 'rgba(110, 135, 160, 0.22)';
+      ctx.fillText('···', x + 3, midY);
+      if (!cell) continue;
+      if (hasNote) {
+        ctx.fillStyle = '#b9d9ff';
+        ctx.fillText(noteName(cell.note), x + 3, midY);
+      }
+      if (cell.ins) {
+        ctx.fillStyle = 'rgba(170, 200, 225, 0.75)';
+        ctx.fillText(String(cell.ins).padStart(2, '0'), x + 21, midY);
+      }
+      if (cell.vol >= 0) {
+        ctx.fillStyle = 'rgba(130, 200, 165, 0.8)';
+        ctx.fillText(String(cell.vol).padStart(2, '0'), x + 39, midY);
+      }
+    }
+  }
+  if (pattern && totalRows > geometry.rows) {
+    const trackH = geometry.height - TRACKER_HEADER_H;
+    const thumbY = TRACKER_HEADER_H + (start / totalRows) * trackH;
+    const thumbH = Math.max(8, (geometry.rows / totalRows) * trackH);
+    ctx.fillStyle = 'rgba(150, 180, 210, 0.14)';
+    ctx.fillRect(geometry.width - 3, thumbY, 3, thumbH);
+  }
+}
+
 async function wireAudioPreview(entry, info, body, token) {
   const canvas = body.querySelector('.audio-wave');
   const statusEl = body.querySelector('[data-audio-state]');
   const lengthEl = body.querySelector('[data-audio-length]');
   if (!canvas) return;
   let seekDuration = 0;
+  let seekHandler = null;
 
   canvas.addEventListener('click', (event) => {
     if (!seekDuration) return;
+    if (seekHandler) {
+      seekHandler(event);
+      return;
+    }
     const rect = canvas.getBoundingClientRect();
     if (!rect.width) return;
     const fraction = clamp((event.clientX - rect.left) / rect.width, 0, 1);
@@ -451,6 +821,120 @@ async function wireAudioPreview(entry, info, body, token) {
       { startAt: fraction * seekDuration }
     );
   });
+
+  if (isTrackerPath(entry.path)) {
+    const formatEl = body.querySelector('.audio-format');
+    const posEl = body.querySelector('[data-tracker-pos]');
+    const view = { time: 0, start: 0, playing: false, cursorOrder: null, cursorRow: null };
+    let result = null;
+    let paint = () => {};
+    if (statusEl) {
+      statusEl.hidden = false;
+      statusEl.innerHTML = `${icon('loader', 13, 'spin')} Rendering tracker…`;
+    }
+    try {
+      result = await loadTracker(entry);
+      if (token !== state.preview.token || !canvas.isConnected) return;
+      seekDuration = result.duration || 0;
+      paint = () => {
+        if (!result || !canvas.isConnected) return;
+        drawTrackerGrid(canvas, result, view);
+        if (posEl) {
+          const snap = view.snap || trackerSnapshot(result.song, view.time);
+          const order = view.order ?? snap.order;
+          const row = view.row ?? snap.row;
+          const pattern = result.song.patterns[result.song.orders[order]];
+          posEl.textContent = `Ord ${String(order + 1).padStart(2, '0')} · Row ${String(row + 1).padStart(2, '0')}/${pattern ? pattern.rows : 64}`;
+          posEl.hidden = false;
+        }
+      };
+      seekHandler = (event) => {
+        if (!result) return;
+        const rect = canvas.getBoundingClientRect();
+        if (event.clientY - rect.top < TRACKER_HEADER_H) return;
+        const row = view.start + Math.floor((event.clientY - rect.top - TRACKER_HEADER_H) / TRACKER_ROW_H);
+        const snap = view.snap || trackerSnapshot(result.song, view.time);
+        if (row < 0) return;
+        const ref = findTrackerRow(result.song, view.order ?? snap.order, row, snap.index);
+        if (!ref) return;
+        playEntry(
+          { path: entry.path, name: basename(entry.path), kind: 'audio' },
+          { startAt: ref.time }
+        );
+      };
+      const stepOrder = (delta) => {
+        const orders = result.song.orders;
+        let next = view.cursorOrder + delta;
+        while (next >= 0 && next < orders.length) {
+          if (orders[next] != null) break;
+          next += delta;
+        }
+        if (next < 0 || next >= orders.length) return;
+        view.cursorOrder = next;
+        const pattern = result.song.patterns[orders[next]];
+        view.cursorRow = Math.min(view.cursorRow, (pattern ? pattern.rows : 64) - 1);
+      };
+      canvas.addEventListener('pointerdown', () => canvas.focus({ preventScroll: true }));
+      canvas.addEventListener('keydown', (event) => {
+        if (!result || view.playing) return;
+        const pattern = result.song.patterns[result.song.orders[view.cursorOrder]];
+        const rows = pattern ? pattern.rows : 64;
+        if (event.key === 'ArrowUp') {
+          view.cursorRow = clamp(view.cursorRow - 1, 0, rows - 1);
+        } else if (event.key === 'ArrowDown') {
+          view.cursorRow = clamp(view.cursorRow + 1, 0, rows - 1);
+        } else if (event.key === 'ArrowLeft') {
+          stepOrder(-1);
+        } else if (event.key === 'ArrowRight') {
+          stepOrder(1);
+        } else {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        paint();
+      });
+      if (lengthEl) lengthEl.textContent = fmtDuration(result.duration);
+      setMetaField(body, 'duration', fmtDuration(result.duration));
+      setMetaField(body, 'sampleRate', `${(result.sampleRate / 1000).toFixed(1)} kHz`);
+      setMetaField(body, 'channels', 'Stereo');
+      setMetaField(body, 'trackTitle', result.song.title);
+      setMetaField(body, 'trackerName', result.song.tracker);
+      setMetaField(body, 'trackerOrders', String(result.song.orders.length));
+      setMetaField(body, 'trackerPatterns', String(result.song.patternCount));
+      setMetaField(body, 'trackerSamples', String(result.song.sampleCount));
+      if (formatEl) formatEl.textContent = `${result.song.format} · ${trackerKindLabel(entry.path, result.song.format)}`;
+      const bankEl = body.querySelector('[data-sound-bank]');
+      if (bankEl) fillSoundBank(bankEl, entry, result);
+      if (statusEl) statusEl.hidden = true;
+      if (typeof ResizeObserver === 'function') {
+        const observer = new ResizeObserver(() => paint());
+        observer.observe(canvas);
+      }
+      stopPlaybackMirror = onPlayback((snapshot) => {
+        if (snapshot.path && snapshot.path.toLowerCase() === entry.path.toLowerCase()) {
+          const wasPlaying = view.playing;
+          view.time = snapshot.time;
+          view.playing = snapshot.playing;
+          if (wasPlaying && !view.playing && view.snap) {
+            view.cursorOrder = view.snap.order;
+            view.cursorRow = view.snap.row;
+          }
+        } else {
+          view.playing = false;
+        }
+        paint();
+      });
+      paint();
+    } catch {
+      if (token !== state.preview.token || !canvas.isConnected) return;
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.textContent = 'Tracker preview unavailable — press Play';
+      }
+    }
+    return;
+  }
 
   if (isMidiPath(entry.path)) {
     const formatEl = body.querySelector('.audio-format');
@@ -737,7 +1221,11 @@ export function renderPreview() {
         : null;
       if (token !== state.preview.token) return;
 
-      const archive = archiveSupported(entry) ? await archiveSummaryFor(entry) : null;
+      const archive = archiveListable(entry)
+        ? await archiveSummaryFor(entry)
+        : discSupported(entry)
+          ? await discSummaryFor(entry)
+          : null;
       if (token !== state.preview.token) return;
 
       const mosaic = info.isDir ? await folderMosaicFor(entry, 16) : null;

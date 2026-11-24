@@ -79,6 +79,12 @@ treemap visualization of any folder — and it builds as a portable executable f
   extracting file data. Password-protected ZIP, RAR and 7Z archives (including archives with encrypted headers)
   show a padlock over the card, an "Encrypted" content type, and a password-required message in the preview
   pane instead of a contents list. The preview pane shows the same contents list with total uncompressed size.
+- **Disc image contents**: ISO (ISO 9660/Joliet/UDF) and legacy Atari disk images (ATR, DI, XFD, PRO) cards list
+  the files and folders stored inside the image, the filesystem label or volume name when present, file/folder
+  counts and a best-guess content type, using the same card layout as archives. The preview pane shows the full
+  top entries plus the filesystem and volume metadata. Atari images are parsed through their boot-sector
+  layout and DOS 2.x/MyDOS directory entries; copy-protected DCM and ATX images keep the disc-style card and
+  report that their contents cannot be listed.
 - **Extract archives**: right-click an archive (or use the preview pane's **Extract To…** button) to unpack it
   into a folder that defaults to the archive's own folder plus its name without the extension. ZIP, TAR,
   TAR.GZ/TGZ, TAR.BZ2/TBZ2, GZ, BZ2 and 7Z extract natively; RAR uses an installed bsdtar, 7-Zip or unrar.
@@ -144,6 +150,16 @@ treemap visualization of any folder — and it builds as a portable executable f
   **Reset MIDI SoundFont** in the same menu, **Use built-in** in the preview, or the reset button under
   **Settings → Playback → MIDI SoundFont** returns to the generative synth. The choice is remembered across
   sessions.
+- **Tracker modules**: `.mod`, `.stm`, `.s3m`, `.s3i`/`.s3t`, `.xm`, `.it`, `.mptm` and the compressed
+  `.s3z`/`.xmz`/`.itz`/`.mptmz`/`.mdz` variants play through a built-in mixer with per-channel panning and
+  looping samples. The preview shows the live pattern grid — notes, instrument and volume columns, with the
+  playing row highlighted and a click on any row starting playback there — plus title, tracker, order,
+  pattern and sample counts. When playback is stopped, the pattern grid takes focus and the arrow keys move the
+  cursor down and up by rows and left and right by patterns. A **Sound bank** under the preview actions lets
+  you audition any sample (and the single instrument of an `.s3t`/`.s3i` file) on its own, once, at its native
+  pitch; right-click a sample to **Export as…** (OGG Vorbis/FLAC/WAV through a save dialog) or use **Quick Export**
+  to write the chosen format next to the module as `<name>-<bank number>`. The player bar treats modules like
+  any other audio track.
 - **Search** the current folder instantly, or recurse into subfolders with gitignore-aware walking. Which of
   the two the search box does is a setting (**Settings → Browsing → Search subfolders**); the scope button next
   to the box flips the same switch, and the choice is remembered across sessions.
@@ -158,6 +174,20 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **File operations**: create folder, rename, copy/cut/paste with collision-safe names, reveal, properties,
   and delete to the system Trash. Right-clicking a folder segment in the breadcrumb path opens the same
   folder menu as right-clicking that folder in the grid or list, without disturbing the current selection.
+- **File operation queue**: copies, moves, deletes and archive extractions run through a dedicated
+  **File operations** tab. The tab opens on its own (without stealing focus from the current folder) when
+  something is queued, and can also be reached from **More actions → File operations**. Operations run one at
+  a time with a live progress bar and per-item result; finished entries can be cleared, and the tab survives
+  restarts like any other tab.
+- **Legacy formats**: **Settings → Browsing → Support Legacy File Formats** (on by default) natively identifies
+  MS-DOS, Amiga, Commodore, Atari and other classic 8/16-bit file types by reading their contents, so only files
+  that pass a format check are grouped. Identified files join a **Legacy** filter and show their real kind
+  (Atari ATR/XEX/CAS, DI/XFD/APE/ATX/DCM/DSK disk images, CART cartridge images, ARC/LZH/LZW archives,
+  tokenized Atari BASIC, BASIC XL/XE and Turbo BASIC programs, MAC/65 and C source listings, fonts
+  including Daisy-Dot NLQ, GR8/GR9/G15/HIP/RGB/INT95a/Fun with Art/ILC pictures,
+  SAP/SID/NSF/RMT/CMC/DMC/ProTracker/TMC/TM2/AMP/AMS/Future Composer music) in cards, list, search, the
+  palette and the preview; turning the setting off removes the group and falls back to the
+  extension-based kind.
 - **System Menu** (Windows): right-click any drive, file or folder — including treemap tiles — and open
   the real shell context menu, with shell extensions and submenus, as a submenu of the app menu.
 - **File Explorer integration** (Windows): **Settings → Windows integration → Add AltFile Context Menu Items**
@@ -283,6 +313,7 @@ the executable at compile time.
 | `Delete` | Move selection to Trash |
 | `Enter` | Open focused item |
 | Arrows, `Home`, `End`, `PageUp`, `PageDown` | Move focus (hold `Shift` to extend selection); in grid view `←` / `→` move the cursor, in list view they go up / enter |
+| Arrows in the tracker pattern grid | While stopped, move the tracker cursor by row (`↑`/`↓`) or pattern (`←`/`→`) |
 | `Menu` (application key) | Open the context menu at the current focus; the command palette opens when nothing is selected |
 | `Ctrl+Menu` | Command palette, bypassing the context menu |
 | `Alt+Menu` | Open the window (title bar) menu on Windows |
@@ -305,6 +336,16 @@ opens a typed path instead of filtering.
   events and supports generation-based cancellation; returns a two-level tree with deeper levels populated
   along folders that dominate their parents, plus largest files and extension statistics.
 - `src-tauri/src/search.rs` — fuzzy, gitignore-aware recursive filename search.
+- `src-tauri/src/legacy.rs` — content sniffers for legacy formats (ATR/XEX/CAS/ARC, DI/XFD/PRO/ATX/DCM/DSK
+  disk images, CART cartridges, LZH/LZW archives, tokenized BASIC, BASIC XL/XE and Turbo BASIC programs,
+  MAC/65 and C listings, fonts, pictures, SID/NSF/SAP and the Atari MPT/CMC/DMC/TMC/TM2/RMT/AMP/AMS/FC
+  module families); listings and search call it
+  per candidate extension and only label a file when its header and structure pass the test.
+- `src-tauri/src/iso.rs` — ISO 9660, Joliet and UDF disc reader: path resolution, file reads, the autorun
+  label/icon lookup cached as a PNG, and the recursive contents summary shown on disc cards and in previews.
+- `src-tauri/src/disk.rs` — Atari disk image reader (ATR, DI, XFD and APE ProSystem headers) that maps image
+  sectors through their boot layout, walks DOS 2.x/MyDOS directories and VTOC, and feeds the disc summary;
+  ISO paths are delegated to `iso.rs`.
 - `src-tauri/src/shellmenu.rs` — Windows shell `IContextMenu` enumeration and invocation behind the System Menu.
 - `src-tauri/src/network.rs` — shared-folder discovery for the sidebar: `WNetEnumResourceW` for the browse
   list and the shell Network folder for the machines Windows discovers by itself. Both run on their own
@@ -349,3 +390,6 @@ Data locations:
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Ogg Vorbis sample export bundles a WebAssembly build of libvorbis (BSD-3-Clause, Xiph.Org Foundation)
+through wasm-media-encoders (MIT); the license texts are in `ui/vendor/`.

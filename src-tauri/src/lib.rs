@@ -1,9 +1,11 @@
 mod archive;
+mod disk;
 mod export;
 mod extract;
 mod fonts;
 mod fsops;
 mod iso;
+mod legacy;
 mod md;
 mod media;
 mod mesh;
@@ -400,6 +402,7 @@ pub fn run() {
             fsops::folder_size,
             fsops::folder_media,
             archive::archive_summary,
+            disk::disk_summary,
             extract::archive_extract,
             iso::iso_info,
             fsops::list_places,
@@ -434,6 +437,7 @@ pub fn run() {
             settings::load_settings,
             settings::save_settings,
             export::save_png,
+            export::save_bytes,
             take_launch_path,
             open_window_menu,
             install_explorer_menu,

@@ -33,6 +33,7 @@ export const state = {
   filtering: false,
   defaultShell: 'default',
   modelSpin: true,
+  supportLegacy: true,
   soundFont: null,
   themeHue: DEFAULT_HUE,
   showPlaylists: false,
@@ -70,10 +71,12 @@ export const app = {};
 
 export function createTab(path, extra = {}) {
   const view = ['grid', 'list', 'viz'].includes(extra.view) ? extra.view : 'grid';
+  const kind = extra.kind === 'queue' ? 'queue' : 'folder';
   return {
     id: uid(),
-    path,
-    history: [path],
+    kind,
+    path: kind === 'queue' ? '' : path,
+    history: [kind === 'queue' ? '' : path],
     index: 0,
     view,
     sort: extra.sort || { key: 'name', dir: 1 },
@@ -94,7 +97,10 @@ export function addRecent(path) {
   state.recent = [path, ...state.recent.filter((p) => p.toLowerCase() !== lower)].slice(0, 14);
 }
 
-const AUDIO_EXTS = new Set(['mp3', 'wav', 'flac', 'ogg', 'oga', 'm4a', 'aac', 'wma', 'opus', 'mid', 'midi', 'aiff']);
+const AUDIO_EXTS = new Set([
+  'mp3', 'wav', 'flac', 'ogg', 'oga', 'm4a', 'aac', 'wma', 'opus', 'mid', 'midi', 'aiff',
+  'mod', 'stm', 's3m', 's3z', 's3t', 's3i', 'xm', 'xmz', 'it', 'itz', 'mptm', 'mptmz', 'mdz',
+]);
 const VIDEO_EXTS = new Set(['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'mpg', 'mpeg', '3gp', 'm2ts', 'ogv']);
 
 export function mediaKindOf(path, kind) {
@@ -176,6 +182,7 @@ export async function loadSession() {
       ? saved.defaultShell
       : 'default';
     state.modelSpin = saved.modelSpin !== false;
+    state.supportLegacy = saved.supportLegacy !== false;
     state.soundFont = typeof saved.soundFont === 'string' && saved.soundFont ? saved.soundFont : null;
     state.showPlaylists = saved.showPlaylists === true;
     if (Number.isFinite(saved.themeHue)) {
@@ -206,9 +213,12 @@ export async function loadSession() {
 
     if (Array.isArray(saved.tabs)) {
       for (const savedTab of saved.tabs) {
-        if (!savedTab || typeof savedTab.path !== 'string' || !savedTab.path) continue;
+        if (!savedTab || typeof savedTab.path !== 'string') continue;
+        const isQueue = savedTab.kind === 'queue';
+        if (!savedTab.path && !isQueue) continue;
         state.tabs.push(
           createTab(savedTab.path, {
+            kind: isQueue ? 'queue' : 'folder',
             view: savedTab.view,
             sort: normalizeSort(savedTab.sort),
             filter: typeof savedTab.filter === 'string' ? savedTab.filter : 'all',
@@ -236,6 +246,7 @@ export function captureSession() {
     keybindings: savedBindings(),
     tabs: state.tabs.map((tab) => ({
       path: tab.path,
+      kind: tab.kind || 'folder',
       view: tab.view,
       sort: tab.sort,
       filter: tab.filter,
@@ -253,6 +264,7 @@ export function captureSession() {
     searchRegex: state.searchRegex,
     defaultShell: state.defaultShell,
     modelSpin: state.modelSpin,
+    supportLegacy: state.supportLegacy,
     soundFont: state.soundFont,
     themeHue: state.themeHue,
     showPlaylists: state.showPlaylists,

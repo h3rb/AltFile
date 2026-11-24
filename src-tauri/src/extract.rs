@@ -37,6 +37,8 @@ pub fn extract(path: &Path, dest: &Path) -> Result<(), String> {
         Format::SevenZ => sevenz_rust2::decompress_file(path, dest)
             .map_err(|error| format!("Could not extract archive: {error}")),
         Format::Rar => extract_rar(path, dest),
+        Format::Arc => Err("Extracting ARC archives is not supported yet.".into()),
+        Format::Lha => Err("Extracting LZH archives is not supported yet.".into()),
     }
 }
 

@@ -32,6 +32,10 @@ pub struct Summary {
     pub top: Vec<String>,
     pub truncated: bool,
     pub locked: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filesystem: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -44,6 +48,8 @@ pub(crate) enum Format {
     Bz2,
     Rar,
     SevenZ,
+    Arc,
+    Lha,
 }
 
 pub(crate) fn format_of(name: &str) -> Option<Format> {
@@ -61,6 +67,8 @@ pub(crate) fn format_of(name: &str) -> Option<Format> {
         "bz2" => Some(Format::Bz2),
         "rar" => Some(Format::Rar),
         "7z" => Some(Format::SevenZ),
+        "arc" => Some(Format::Arc),
+        "lzh" => Some(Format::Lha),
         _ => None,
     }
 }
@@ -75,6 +83,8 @@ fn format_label(format: Format) -> &'static str {
         Format::Bz2 => "BZ2",
         Format::Rar => "RAR",
         Format::SevenZ => "7Z",
+        Format::Arc => "ARC",
+        Format::Lha => "LZH",
     }
 }
 
@@ -104,20 +114,24 @@ fn noise(name: &str) -> bool {
 }
 
 #[derive(Default)]
-struct Collector {
+pub(crate) struct Collector {
     files: usize,
     folders: HashSet<String>,
     bytes: u64,
     votes: [usize; 7],
     top: Vec<String>,
     entries: usize,
-    truncated: bool,
+    pub(crate) truncated: bool,
     locked: bool,
     has_exe: bool,
 }
 
 impl Collector {
-    fn add(&mut self, raw: &str, is_dir: bool, size: u64) -> bool {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn add(&mut self, raw: &str, is_dir: bool, size: u64) -> bool {
         let name = normalize(raw);
         if name.is_empty() || noise(&name) {
             return true;
@@ -149,6 +163,22 @@ impl Collector {
         true
     }
 
+    // ARC and LZH have no folder records; count the parents their paths imply.
+    fn add_parent_folders(&mut self, raw: &str) {
+        let name = normalize(raw);
+        let mut end = 0;
+        while let Some(offset) = name[end..].find('/') {
+            end += offset;
+            if end > 0 {
+                if self.folders.len() >= MAX_TRACKED_FOLDERS {
+                    break;
+                }
+                self.folders.insert(name[..end].to_string());
+            }
+            end += 1;
+        }
+    }
+
     fn guess_kind(&self) -> &'static str {
         if self.files == 0 {
             return if self.folders.is_empty() { "Empty" } else { "Folder Tree" };
@@ -178,6 +208,10 @@ impl Collector {
         } else {
             format_label(format)
         };
+        self.finish_named(label)
+    }
+
+    pub(crate) fn finish_named(self, label: &str) -> Summary {
         Summary {
             format: label.to_string(),
             files: self.files,
@@ -191,6 +225,8 @@ impl Collector {
             top: self.top,
             truncated: self.truncated,
             locked: self.locked,
+            label: None,
+            filesystem: None,
         }
     }
 }
@@ -762,6 +798,166 @@ fn read_7z(path: &Path, col: &mut Collector) -> Option<()> {
     Some(())
 }
 
+fn fill(reader: &mut File, buf: &mut [u8]) -> Option<usize> {
+    let mut got = 0;
+    while got < buf.len() {
+        match reader.read(&mut buf[got..]) {
+            Ok(0) => break,
+            Ok(count) => got += count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return None,
+        }
+    }
+    Some(got)
+}
+
+// SEA ARC: 0x1A, method, 13-byte name, packed size, date/time, CRC, unpacked size.
+// Method 0 ends the archive; method 1 uses the older 25-byte header without an
+// unpacked-size field.
+fn read_arc(file: &mut File, col: &mut Collector) -> Option<()> {
+    let len = file.metadata().ok()?.len();
+    let mut head = [0u8; 29];
+    let mut scanned = 0u64;
+    let mut seen = 0usize;
+    loop {
+        let start = file.stream_position().ok()?;
+        if start >= len {
+            break;
+        }
+        let got = fill(file, &mut head[..2])?;
+        if got < 2 {
+            break;
+        }
+        if head[0] != 0x1a {
+            return (seen > 0).then_some(());
+        }
+        let encrypted = head[1] & 0x80 != 0;
+        let method = head[1] & 0x7f;
+        if method == 0 {
+            break;
+        }
+        if method > 9 {
+            return (seen > 0).then_some(());
+        }
+        let header_len = if method == 1 { 25 } else { 29 };
+        if fill(file, &mut head[2..header_len])? < header_len - 2 {
+            break;
+        }
+        let packed = le32(&head, 15) as u64;
+        let size = if method == 1 {
+            packed
+        } else {
+            le32(&head, 25) as u64
+        };
+        let name_end = head[2..15]
+            .iter()
+            .position(|&byte| byte == 0)
+            .map(|index| index + 2)
+            .unwrap_or(15);
+        let raw = String::from_utf8_lossy(&head[2..name_end]).into_owned();
+        let is_dir = raw.ends_with('/') || raw.ends_with('\\');
+        if encrypted && !is_dir {
+            col.locked = true;
+        }
+        if !is_dir {
+            col.add_parent_folders(&raw);
+        }
+        if !col.add(&raw, is_dir, if is_dir { 0 } else { size }) {
+            return Some(());
+        }
+        seen += 1;
+        let next = start + header_len as u64 + packed;
+        if next > len {
+            col.truncated = true;
+            return Some(());
+        }
+        scanned += next - start;
+        if scanned > MAX_SCAN_BYTES {
+            col.truncated = true;
+            return Some(());
+        }
+        file.seek(SeekFrom::Start(next)).ok()?;
+    }
+    (seen > 0).then_some(())
+}
+
+// LHA/LZH: level-0 and level-1 share the first 22 header bytes; level 2 shifts
+// the method ID one byte and starts with a two-byte total header size.
+fn read_lha(file: &mut File, col: &mut Collector) -> Option<()> {
+    let len = file.metadata().ok()?.len();
+    let mut fixed = [0u8; 23];
+    let mut scanned = 0u64;
+    let mut seen = 0usize;
+    loop {
+        let start = file.stream_position().ok()?;
+        if start >= len {
+            break;
+        }
+        let got = fill(file, &mut fixed[..22])?;
+        if got < 22 {
+            break;
+        }
+        if fixed[0] == 0 && fixed[1] == 0 {
+            break;
+        }
+        let level_two = fixed[2] != b'-';
+        if !level_two && fixed[6] != b'-' {
+            return (seen > 0).then_some(());
+        }
+        if level_two {
+            if fixed[7] != b'-' || fill(file, &mut fixed[22..23])? < 1 {
+                return (seen > 0).then_some(());
+            }
+        }
+        let (header_len, packed, size, attr, name_len) = if level_two {
+            if fixed[21] != 2 {
+                return (seen > 0).then_some(());
+            }
+            (
+                le16(&fixed, 0) as usize,
+                le32(&fixed, 8) as u64,
+                le32(&fixed, 12) as u64,
+                0u8,
+                fixed[22] as usize,
+            )
+        } else {
+            (
+                fixed[0] as usize,
+                le32(&fixed, 7) as u64,
+                le32(&fixed, 11) as u64,
+                fixed[19],
+                fixed[21] as usize,
+            )
+        };
+        if name_len == 0 || header_len < 22 + name_len + 2 {
+            return (seen > 0).then_some(());
+        }
+        let mut name = vec![0u8; name_len];
+        file.read_exact(&mut name).ok()?;
+        let raw = String::from_utf8_lossy(&name).into_owned();
+        let is_dir = attr & 0x10 != 0 || raw.ends_with('/') || raw.ends_with('\\');
+        if !is_dir {
+            col.add_parent_folders(&raw);
+        }
+        if !col.add(&raw, is_dir, if is_dir { 0 } else { size }) {
+            return Some(());
+        }
+        seen += 1;
+        let next = start + header_len as u64 + if is_dir { 0 } else { packed };
+        if next > len {
+            col.truncated = true;
+            return Some(());
+        }
+        scanned += next - start;
+        if scanned > MAX_SCAN_BYTES {
+            col.truncated = true;
+            return Some(());
+        }
+        file.seek(SeekFrom::Start(next)).ok()?;
+    }
+    (seen > 0).then_some(())
+}
+
 fn read_vint_file(file: &mut File) -> Option<u64> {
     let mut value = 0u64;
     let mut shift = 0;
@@ -848,6 +1044,8 @@ pub fn summarize(path: &Path) -> Option<Summary> {
         Format::Bz2 => sniffed_tar = read_bz2(File::open(path).ok()?, &mut col, &fallback),
         Format::Rar => read_rar(&mut File::open(path).ok()?, &mut col)?,
         Format::SevenZ => read_7z(path, &mut col)?,
+        Format::Arc => read_arc(&mut File::open(path).ok()?, &mut col)?,
+        Format::Lha => read_lha(&mut File::open(path).ok()?, &mut col)?,
     }
     if col.entries == 0 && !col.locked && matches!(format, Format::Rar) {
         return None;
@@ -1285,6 +1483,124 @@ mod tests {
         assert!(matches!(format_of("a.zip"), Some(Format::Zip)));
         assert!(matches!(format_of("a.rar"), Some(Format::Rar)));
         assert!(matches!(format_of("a.7z"), Some(Format::SevenZ)));
+        assert!(matches!(format_of("a.arc"), Some(Format::Arc)));
+        assert!(matches!(format_of("a.LZH"), Some(Format::Lha)));
+    }
+
+    fn arc_bytes(entries: &[(&str, u32, &[u8])]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (name, size, data) in entries {
+            let mut head = [0u8; 29];
+            head[0] = 0x1a;
+            head[1] = 8;
+            let bytes = name.as_bytes();
+            let count = bytes.len().min(13);
+            head[2..2 + count].copy_from_slice(&bytes[..count]);
+            head[15..19].copy_from_slice(&(data.len() as u32).to_le_bytes());
+            head[25..29].copy_from_slice(&size.to_le_bytes());
+            out.extend_from_slice(&head);
+            out.extend_from_slice(data);
+        }
+        out.extend_from_slice(&[0x1a, 0x00]);
+        out
+    }
+
+    fn lha_header(
+        level: u8,
+        name: &str,
+        packed: u32,
+        size: u32,
+        attr: u8,
+        data: &[u8],
+    ) -> Vec<u8> {
+        let name_bytes = name.as_bytes();
+        let mut out = Vec::new();
+        if level == 2 {
+            out.extend_from_slice(&((28 + name_bytes.len()) as u16).to_le_bytes());
+            out.push(0);
+            out.extend_from_slice(b"-lh5-");
+            out.extend_from_slice(&packed.to_le_bytes());
+            out.extend_from_slice(&size.to_le_bytes());
+            out.extend_from_slice(&[0, 0, 0, 0]);
+            out.push(0);
+            out.push(2);
+            out.push(name_bytes.len() as u8);
+            out.extend_from_slice(name_bytes);
+            out.extend_from_slice(&[0, 0, 0x00, 0, 0]);
+        } else {
+            let header_len = if level == 1 { 27 } else { 24 } + name_bytes.len();
+            out.push(header_len as u8);
+            out.push(0);
+            out.extend_from_slice(b"-lh5-");
+            out.extend_from_slice(&packed.to_le_bytes());
+            out.extend_from_slice(&size.to_le_bytes());
+            out.extend_from_slice(&[0, 0, 0, 0]);
+            out.push(attr);
+            out.push(level);
+            out.push(name_bytes.len() as u8);
+            out.extend_from_slice(name_bytes);
+            out.extend_from_slice(&[0, 0]);
+            if level == 1 {
+                out.extend_from_slice(&[0x6d, 0, 0]);
+            }
+        }
+        out.extend_from_slice(data);
+        out
+    }
+
+    fn lha_bytes(level: u8, entries: &[(&str, u32, &[u8])]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (name, size, data) in entries {
+            let attr = if name.ends_with('/') { 0x10 } else { 0x20 };
+            out.extend_from_slice(&lha_header(level, name, data.len() as u32, *size, attr, data));
+        }
+        out.extend_from_slice(&[0, 0]);
+        out
+    }
+
+    #[test]
+    fn summarizes_arc() {
+        let path = temp_file(
+            "sample.arc",
+            &arc_bytes(&[
+                ("hello.txt", 5, b"hello"),
+                ("docs/a.txt", 40, b"0123456789"),
+            ]),
+        );
+        let summary = summarize(&path).unwrap();
+        assert_eq!(summary.format, "ARC");
+        assert_eq!(summary.files, 2);
+        assert_eq!(summary.folders, 1);
+        assert_eq!(summary.bytes, 45);
+        assert_eq!(summary.kind, "Documents");
+        assert_eq!(summary.top.len(), 2);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn summarizes_lzh_levels() {
+        let entries: [(&str, u32, &[u8]); 3] = [
+            ("hello.txt", 5, b"hello"),
+            ("docs/a.txt", 40, b"0123456789"),
+            ("pics/", 0, b""),
+        ];
+        for level in 0..=2u8 {
+            let path = temp_file(&format!("level{level}.lzh"), &lha_bytes(level, &entries));
+            let summary = summarize(&path).unwrap();
+            assert_eq!(summary.format, "LZH", "level {level}");
+            assert_eq!(summary.files, 2, "level {level}");
+            assert_eq!(summary.folders, 2, "level {level}");
+            assert_eq!(summary.bytes, 45, "level {level}");
+            assert_eq!(summary.kind, "Documents", "level {level}");
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn rejects_non_archive_arc() {
+        let path = temp_file("not.arc", b"plain text, not an archive");
+        assert!(summarize(&path).is_none());
+        let _ = fs::remove_file(path);
     }
 
     #[test]

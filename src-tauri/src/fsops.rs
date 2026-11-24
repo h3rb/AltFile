@@ -1,4 +1,4 @@
-use crate::{paths, AppState};
+use crate::{legacy, paths, AppState};
 use notify::Watcher;
 use serde::Serialize;
 use std::fs;
@@ -21,6 +21,7 @@ pub struct Entry {
     pub created: u64,
     pub ext: String,
     pub kind: String,
+    pub legacy: Option<String>,
     pub hidden: bool,
 }
 
@@ -118,7 +119,16 @@ pub fn list_dir(path: String, show_hidden: bool) -> Result<Listing, String> {
         } else {
             paths::ext_of(&name)
         };
-        let kind = paths::classify(&ext, is_dir);
+        let legacy = if is_dir {
+            None
+        } else {
+            legacy::identify(&item_path, &ext, size).map(str::to_string)
+        };
+        let kind = if legacy.is_some() {
+            "legacy"
+        } else {
+            paths::classify(&ext, is_dir)
+        };
 
         entries.push(Entry {
             name,
@@ -135,6 +145,7 @@ pub fn list_dir(path: String, show_hidden: bool) -> Result<Listing, String> {
                 .unwrap_or(0),
             ext,
             kind: kind.to_string(),
+            legacy,
             hidden,
         });
     }
@@ -661,6 +672,7 @@ pub struct FileInfo {
     pub created: u64,
     pub readonly: bool,
     pub kind: String,
+    pub legacy: Option<String>,
     pub ext: String,
     pub dimensions: Option<(u32, u32)>,
     pub entry_count: Option<u64>,
@@ -681,7 +693,16 @@ pub fn file_info(path: String) -> Result<FileInfo, String> {
     } else {
         paths::ext_of(&name)
     };
-    let kind = paths::classify(&ext, is_dir).to_string();
+    let legacy = if is_dir {
+        None
+    } else {
+        legacy::identify(&p, &ext, meta.len()).map(str::to_string)
+    };
+    let kind = if legacy.is_some() {
+        "legacy".to_string()
+    } else {
+        paths::classify(&ext, is_dir).to_string()
+    };
     let dimensions = if kind == "image" {
         image::image_dimensions(&p).ok()
     } else {
@@ -711,6 +732,7 @@ pub fn file_info(path: String) -> Result<FileInfo, String> {
         created,
         readonly: meta.permissions().readonly(),
         kind,
+        legacy,
         ext,
         dimensions,
         entry_count,

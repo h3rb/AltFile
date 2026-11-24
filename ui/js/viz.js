@@ -21,7 +21,7 @@ const DIR_PALETTE = ['#2dd4bf', '#60a5fa', '#a78bfa', '#f472b6', '#fbbf24', '#4a
 const EXT_GROUPS = {
   image: 'png jpg jpeg gif webp bmp ico svg avif tif tiff heic',
   video: 'mp4 mkv mov avi webm m4v wmv flv mpg mpeg ts',
-  audio: 'mp3 wav flac ogg m4a aac wma opus',
+  audio: 'mp3 wav flac ogg oga m4a aac wma opus',
   code: 'rs js mjs cjs ts tsx jsx py go java c h cpp hpp cc cs php rb swift kt kts lua sh bash ps1 html css scss less json jsonc yaml yml toml xml sql vue svelte astro',
   doc: 'pdf doc docx xls xlsx ppt pptx txt md markdown rtf odt csv tsv',
   archive: 'zip rar 7z tar gz bz2 xz iso cab',

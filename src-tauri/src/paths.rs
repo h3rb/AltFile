@@ -112,8 +112,9 @@ pub fn classify(ext: &str, is_dir: bool) -> &'static str {
         | "svg" | "avif" | "heic" | "heif" | "raw" | "cr2" | "nef" => "image",
         "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpg" | "mpeg" | "3gp"
         | "m2ts" | "ogv" => "video",
-        "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "wma" | "opus" | "mid" | "midi"
-        | "rmi" | "kar" | "aiff" => "audio",
+        "mp3" | "wav" | "flac" | "ogg" | "oga" | "m4a" | "aac" | "wma" | "opus" | "mid" | "midi"
+        | "rmi" | "kar" | "aiff" | "mod" | "stm" | "s3m" | "s3z" | "s3t" | "s3i" | "xm" | "xmz"
+        | "it" | "itz" | "mptm" | "mptmz" | "mdz" => "audio",
         "rs" | "js" | "mjs" | "cjs" | "ts" | "tsx" | "jsx" | "py" | "rb" | "go" | "java" | "c"
         | "h" | "cpp" | "hpp" | "cc" | "cs" | "php" | "swift" | "kt" | "kts" | "scala" | "sh"
         | "bash" | "zsh" | "ps1" | "bat" | "cmd" | "lua" | "r" | "sql" | "html" | "htm" | "css"

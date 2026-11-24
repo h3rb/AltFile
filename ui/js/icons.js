@@ -87,6 +87,7 @@ const KIND_ICON = {
   font: 'font',
   model: 'cube',
   soundfont: 'piano',
+  legacy: 'archive',
   file: 'file',
   other: 'layers',
 };

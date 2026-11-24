@@ -1,3 +1,4 @@
+use crate::archive::{Collector, Summary};
 use crate::{paths, thumbs, AppState};
 use image::DynamicImage;
 use serde::Serialize;
@@ -541,6 +542,13 @@ enum Volume {
 }
 
 impl Volume {
+    fn filesystem(&self) -> &'static str {
+        match self {
+            Volume::Iso(_) => "ISO 9660",
+            Volume::Udf(_) => "UDF",
+        }
+    }
+
     fn root(&self) -> Node {
         match self {
             Volume::Iso(volume) => volume.root(),
@@ -955,6 +963,98 @@ fn pe_icon(bytes: &[u8], index: i32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+fn config_nodes(disc: &Disc, file: &File) -> Vec<(usize, Node)> {
+    let mut configs: Vec<_> = disc
+        .root_files(file)
+        .into_iter()
+        .filter(|(_, node)| matches!(paths::ext_of(&node.name).as_str(), "inf" | "ini"))
+        .collect();
+    configs.sort_by_key(|(_, node)| {
+        let name = node.name.to_ascii_lowercase();
+        let priority = match name.as_str() {
+            "autorun.inf" => 0,
+            "autorun.ini" => 1,
+            "desktop.ini" => 2,
+            _ => 3,
+        };
+        (priority, name)
+    });
+    configs
+}
+
+fn disc_label(disc: &Disc, file: &File) -> Option<String> {
+    let launch_label = config_nodes(disc, file)
+        .into_iter()
+        .take(16)
+        .filter_map(|(index, node)| {
+            let bytes = disc.read_node(file, index, &node, MAX_INF)?;
+            parse_autorun(&decode_text(&bytes))
+                .label
+                .as_deref()
+                .and_then(clean_label)
+        })
+        .next();
+    launch_label
+        .or_else(|| {
+            disc.read(file, ".disk/info", MAX_TEXT)
+                .and_then(|bytes| first_line(&decode_text(&bytes)))
+                .and_then(|line| clean_label(&line))
+        })
+        .or_else(|| disc.label.as_deref().and_then(clean_label))
+}
+
+fn walk_volume(
+    file: &File,
+    volume: &Volume,
+    node: &Node,
+    prefix: &str,
+    depth: u8,
+    visited: &mut std::collections::HashSet<u64>,
+    col: &mut Collector,
+) -> bool {
+    if depth > 16 {
+        col.truncated = true;
+        return false;
+    }
+    let Some(children) = volume.list(file, node) else {
+        col.truncated = true;
+        return false;
+    };
+    for child in children {
+        let name = if prefix.is_empty() {
+            child.name.clone()
+        } else {
+            format!("{prefix}/{}", child.name)
+        };
+        if !col.add(&name, child.dir, child.size) {
+            return false;
+        }
+        if child.dir
+            && visited.insert(child.extent)
+            && !walk_volume(file, volume, &child, &name, depth + 1, visited, col)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+pub(crate) fn summarize(path: &str) -> Option<Summary> {
+    let file_path = paths::canonical(&paths::expand(path));
+    let file = File::open(&file_path).ok()?;
+    let disc = Disc::open(&file)?;
+    let volume = disc.volumes.first()?;
+    let mut visited = std::collections::HashSet::new();
+    let root = volume.root();
+    visited.insert(root.extent);
+    let mut col = Collector::new();
+    walk_volume(&file, volume, &root, "", 0, &mut visited, &mut col);
+    let mut summary = col.finish_named("ISO");
+    summary.filesystem = Some(volume.filesystem().to_string());
+    summary.label = disc_label(&disc, &file);
+    Some(summary)
+}
+
 fn root_icons(disc: &Disc, file: &File) -> Vec<(usize, Node)> {
     let mut icons: Vec<(u8, String, usize, Node)> = disc
         .root_files(file)
@@ -988,32 +1088,13 @@ fn inspect(thumb_dir: &Path, path: &str) -> Option<IsoInfo> {
     let file = File::open(&file_path).ok()?;
     let disc = Disc::open(&file)?;
 
-    let mut configs: Vec<_> = disc
-        .root_files(&file)
-        .into_iter()
-        .filter(|(_, node)| matches!(paths::ext_of(&node.name).as_str(), "inf" | "ini"))
-        .collect();
-    configs.sort_by_key(|(_, node)| {
-        let name = node.name.to_ascii_lowercase();
-        let priority = match name.as_str() {
-            "autorun.inf" => 0,
-            "autorun.ini" => 1,
-            "desktop.ini" => 2,
-            _ => 3,
-        };
-        (priority, name)
-    });
-    let mut launch_label = None;
     let mut icon_image = None;
     let mut icon_from = None;
-    for (index, node) in configs.into_iter().take(16) {
+    for (index, node) in config_nodes(&disc, &file).into_iter().take(16) {
         let Some(bytes) = disc.read_node(&file, index, &node, MAX_INF) else {
             continue;
         };
         let launch = parse_autorun(&decode_text(&bytes));
-        if launch_label.is_none() {
-            launch_label = launch.label.as_deref().and_then(clean_label);
-        }
         if icon_image.is_none() {
             if let Some((icon, resource_index)) = launch.icon.as_deref().and_then(icon_path) {
                 if let Some(bytes) = disc.read(&file, &icon, MAX_ICON) {
@@ -1025,7 +1106,7 @@ fn inspect(thumb_dir: &Path, path: &str) -> Option<IsoInfo> {
                 }
             }
         }
-        if icon_image.is_some() && launch_label.is_some() {
+        if icon_image.is_some() {
             break;
         }
     }
@@ -1065,13 +1146,7 @@ fn inspect(thumb_dir: &Path, path: &str) -> Option<IsoInfo> {
             .map(|_| thumbs::url_for(&cache_name))
     });
 
-    let label = launch_label
-        .or_else(|| {
-            disc.read(&file, ".disk/info", MAX_TEXT)
-                .and_then(|bytes| first_line(&decode_text(&bytes)))
-                .and_then(|line| clean_label(&line))
-        })
-        .or_else(|| disc.label.as_deref().and_then(clean_label));
+    let label = disc_label(&disc, &file);
 
     Some(IsoInfo {
         label,
@@ -1287,6 +1362,22 @@ mod tests {
             desktop.icon.as_deref().and_then(icon_path),
             Some(("icons\\disc.dll".into(), -123))
         );
+    }
+
+    #[test]
+    fn summarizes_disc_contents_and_label() {
+        let iso = build_iso("[autorun]\r\nlabel=Demo Disc\r\n", &icon_bytes());
+        let path = temp_file("summary.iso");
+        std::fs::write(&path, &iso).unwrap();
+        let summary = summarize(&path.to_string_lossy()).unwrap();
+        assert_eq!(summary.format, "ISO");
+        assert_eq!(summary.filesystem.as_deref(), Some("ISO 9660"));
+        assert_eq!(summary.label.as_deref(), Some("Demo Disc"));
+        assert_eq!(summary.files, 2);
+        assert_eq!(summary.folders, 0);
+        assert_eq!(summary.kind, "Media Files");
+        assert_eq!(summary.top, vec!["AUTORUN.INF", "CDROM.ICO"]);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

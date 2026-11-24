@@ -29,7 +29,7 @@ fn mime_for(ext: &str) -> Option<&'static str> {
         "otf" => Some("font/otf"),
         "mp4" => Some("video/mp4"),
         "webm" => Some("video/webm"),
-        "ogg" => Some("audio/ogg"),
+        "ogg" | "oga" | "opus" => Some("audio/ogg"),
         "mp3" => Some("audio/mpeg"),
         "wav" => Some("audio/wav"),
         _ => None,

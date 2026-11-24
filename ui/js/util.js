@@ -218,6 +218,7 @@ export const KIND_LABELS = {
   font: 'Font',
   model: '3D Model',
   soundfont: 'SoundFont',
+  legacy: 'Legacy',
   file: 'File',
   other: 'Group',
 };
@@ -234,6 +235,7 @@ export const KIND_COLORS = {
   font: '#a78bfa',
   model: '#38bdf8',
   soundfont: '#34d399',
+  legacy: '#a3e635',
   file: '#94a3b8',
   other: '#64748b',
 };
@@ -242,6 +244,11 @@ export function kindLabel(kind, ext = '') {
   const label = KIND_LABELS[kind] || 'File';
   if (label === 'File' && ext) return `File: ${ext.toUpperCase()}`;
   return label;
+}
+
+export function entryKindLabel(entry) {
+  if (!entry) return 'File';
+  return entry.legacy || kindLabel(entry.kind, entry.ext);
 }
 
 export function kindColor(kind) {

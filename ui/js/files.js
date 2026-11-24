@@ -7,6 +7,7 @@ import { soundfontTileHtml, observeSoundfontTiles } from './sf2.js';
 import { pageTileHtml, observePageTiles } from './pages.js';
 import { detailCellHtml, observeDetails } from './details.js';
 import { cachedWave, fallbackPeaks, loadWave, drawWaveform } from './waveform.js';
+import { isTrackerPath, cachedTracker } from './tracker.js';
 import { packMosaic, mosaicHtml } from './mosaic.js';
 import { visibleChips } from './chipfit.js';
 import { spanRect, rectsIntersect, marqueeSelection } from './marquee.js';
@@ -22,7 +23,7 @@ import {
   compactCount,
   fuzzy,
   highlightName,
-  kindLabel,
+  entryKindLabel,
   kindColor,
   clamp,
   debounce,
@@ -45,6 +46,9 @@ const THUMB_KINDS = new Set(['image', 'video', 'audio', 'exe', 'shortcut']);
 const THUMB_MODELS = new Set(['stl', 'obj', 'ply', '3mf']);
 const NO_DOC_THUMB = new Set(['txt', 'md', 'markdown', 'log', 'csv', 'tsv', 'rtf']);
 const ARCHIVE_EXTS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'tbz2', 'tbz']);
+const LEGACY_ARCHIVE_EXTS = new Set(['arc', 'lzh']);
+const DISC_EXTS = new Set(['iso', 'atr', 'xfd', 'di', 'pro', 'dcm', 'dc3', 'dsk', 'atx']);
+const LEGACY_DISC_EXTS = new Set(['atr', 'xfd', 'di', 'pro', 'dcm', 'dc3', 'dsk', 'atx']);
 
 const FILTERS = [
   { id: 'all', label: 'All', icon: 'layers' },
@@ -56,6 +60,7 @@ const FILTERS = [
   { id: 'code', label: 'Code', icon: 'code' },
   { id: 'archives', label: 'Archives', icon: 'archive' },
   { id: 'models', label: 'Models', icon: 'cube' },
+  { id: 'legacy', label: 'Legacy', icon: 'archive' },
   { id: 'recent', label: 'Recent', icon: 'sparkles', smart: true },
   { id: 'large', label: 'Large', icon: 'funnel', smart: true },
 ];
@@ -102,11 +107,14 @@ let mosaicActive = 0;
 let mosaicObserver = null;
 
 const isoCache = new Map();
-const isoQueue = [];
 const MAX_ISO_CACHE = 500;
-const MAX_ISO_REQUESTS = 2;
-let isoActive = 0;
-let isoObserver = null;
+
+const discCache = new Map();
+const discQueue = [];
+const MAX_DISC_CACHE = 4000;
+const MAX_DISC_REQUESTS = 2;
+let discActive = 0;
+let discObserver = null;
 
 let waveObserver = null;
 let waveResizeBound = false;
@@ -145,6 +153,17 @@ function rgba(color, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function honorLegacy(entries) {
+  if (state.supportLegacy) return entries;
+  for (const entry of entries || []) {
+    if (entry.kind === 'legacy') {
+      entry.kind = 'file';
+      entry.legacy = null;
+    }
+  }
+  return entries;
+}
+
 function matchesFilter(entry, filter) {
   switch (filter) {
     case 'folders':
@@ -163,6 +182,8 @@ function matchesFilter(entry, filter) {
       return entry.kind === 'archive';
     case 'models':
       return entry.kind === 'model';
+    case 'legacy':
+      return entry.kind === 'legacy';
     case 'recent':
       return entry.modified > Date.now() - RECENT_MS;
     case 'large':
@@ -185,7 +206,7 @@ function compareEntries(a, b, sort) {
   } else if (sort.key === 'modified') {
     result = touchedDate(a) - touchedDate(b);
   } else if (sort.key === 'kind') {
-    result = naturalCompare(kindLabel(a.kind), kindLabel(b.kind));
+    result = naturalCompare(entryKindLabel(a), entryKindLabel(b));
   }
   if (!result) result = naturalCompare(a.name, b.name);
   return result * (sort.dir < 0 ? -1 : 1);
@@ -355,7 +376,7 @@ export function beginSearch() {
 export function finishSearch(results, error = null) {
   state.searchError = error;
   state.searching = false;
-  state.searchResults = Array.isArray(results) ? results : [];
+  state.searchResults = honorLegacy(Array.isArray(results) ? results : []);
   recomputeVisible();
   renderFiles();
   renderFilters();
@@ -429,6 +450,20 @@ export function archiveSupported(entry) {
   );
 }
 
+export function archiveListable(entry) {
+  if (!entry || entry.isDir) return false;
+  if (archiveSupported(entry)) return true;
+  return entry.kind === 'legacy' && LEGACY_ARCHIVE_EXTS.has((entry.ext || '').toLowerCase());
+}
+
+export function discSupported(entry) {
+  if (!entry || entry.isDir) return false;
+  const ext = (entry.ext || '').toLowerCase();
+  if (!DISC_EXTS.has(ext)) return false;
+  if (ext === 'iso') return true;
+  return entry.kind === 'legacy' && LEGACY_DISC_EXTS.has(ext);
+}
+
 export function archiveFormat(entry) {
   const name = (entry.name || '').toLowerCase();
   if (name.endsWith('.tar.gz') || name.endsWith('.tgz')) return 'TAR.GZ';
@@ -437,11 +472,31 @@ export function archiveFormat(entry) {
 }
 
 function archiveTileHtml(entry) {
-  if (!archiveSupported(entry)) return '';
+  if (!archiveListable(entry)) return '';
   const color = kindColor('archive');
   return `
         <div class="archive-tile" data-archive-path="${esc(entry.path)}" data-archive-mtime="${entry.modified || 0}" style="--kind-color:${color};--kind-glow:${rgba(color, 0.14)}">
           <div class="archive-head">${icon('archive', 11)}<span>${esc(archiveFormat(entry))}</span></div>
+          <div class="archive-rows" hidden></div>
+          <div class="archive-foot" hidden>
+            <span class="archive-kind"></span>
+            <span class="archive-nums">
+              <span class="archive-count">${icon('fileText', 9)}<b data-role="files"></b></span>
+              <span class="archive-count">${icon('folder', 9)}<b data-role="folders"></b></span>
+            </span>
+          </div>
+          <div class="archive-skeleton" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="archive-note" hidden></div>
+        </div>`;
+}
+
+function discTileHtml(entry) {
+  if (!discSupported(entry)) return '';
+  const color = kindColor(entry.kind === 'legacy' ? 'legacy' : 'archive');
+  const format = (entry.ext || 'disc').toUpperCase();
+  return `
+        <div class="archive-tile disc-tile" data-disc-path="${esc(entry.path)}" data-disc-mtime="${entry.modified || 0}" style="--kind-color:${color};--kind-glow:${rgba(color, 0.14)}">
+          <div class="archive-head"><span class="disc-head-icon">${icon('disc', 11)}</span><span class="disc-head-label">${esc(format)}</span></div>
           <div class="archive-rows" hidden></div>
           <div class="archive-foot" hidden>
             <span class="archive-kind"></span>
@@ -467,7 +522,7 @@ function cardHtml(entry, index) {
   const hoverVideo = !entry.isDir && entry.kind === 'video';
   const thumbBody = entry.isDir
     ? folderTileHtml(entry)
-    : `${isoTileHtml(entry) || archiveTileHtml(entry) || fontTileHtml(entry) || soundfontTileHtml(entry) || pageTileHtml(entry) || `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>`}
+    : `${discTileHtml(entry) || archiveTileHtml(entry) || fontTileHtml(entry) || soundfontTileHtml(entry) || pageTileHtml(entry) || `<div class="kind-tile" style="--kind-color:${color};--kind-glow:${rgba(color, 0.12)}">${kindIcon(entry.kind, 34)}</div>`}
         ${thumb ? '<img alt="" decoding="async" draggable="false">' : ''}`;
   return `
     <article class="${classes.join(' ')}" data-path="${esc(entry.path)}" data-index="${index}" title="${esc(entry.path)}">
@@ -478,7 +533,7 @@ function cardHtml(entry, index) {
       </div>
       <div class="card-name">${nameHtml(entry)}</div>
       <div class="card-meta">
-        <span class="kind-label" style="--kind-color:${color}">${esc(kindLabel(entry.kind))}</span>
+        <span class="kind-label" style="--kind-color:${color}">${esc(entryKindLabel(entry))}</span>
         <span class="dot">·</span>
         <span>${meta}</span>
       </div>
@@ -508,7 +563,7 @@ function rowHtml(entry, index) {
       </div>
       <div class="cell-size"${entry.isDir ? ` data-size-path="${esc(entry.path)}" data-size-mtime="${entry.modified || 0}"` : ''}>${entry.isDir ? '—' : esc(humanSize(entry.size))}</div>
       <div class="cell-date" title="Latest of modified or created">${esc(fmtFullDate(touchedDate(entry)))}</div>
-      <div class="cell-kind">${esc(kindLabel(entry.kind, entry.ext))}</div>
+      <div class="cell-kind">${esc(entryKindLabel(entry))}</div>
       ${detailCellHtml(entry)}
     </div>`;
 }
@@ -745,7 +800,7 @@ export function renderFiles() {
   observeCounts();
   observeFolderMedia();
   observeArchives();
-  observeIso();
+  observeDisc();
   observeFontTiles();
   observeSoundfontTiles();
   observePageTiles();
@@ -766,6 +821,13 @@ function paintRowWave(canvas) {
     modified: Number(canvas.dataset.waveMtime) || 0,
   };
   const size = Number(canvas.dataset.waveSize) || 0;
+  if (isTrackerPath(path)) {
+    // Modules are mixed down on demand by the preview/player; a row peek only
+    // reuses an existing render so scrolling never triggers full renders.
+    const knownModule = cachedTracker(entry);
+    drawWaveform(canvas, knownModule ? knownModule.peaks : fallbackPeaks(entry.name), { subtle: true });
+    return;
+  }
   const known = cachedWave(entry, size);
   drawWaveform(canvas, known ? known.peaks : fallbackPeaks(entry.name), { subtle: true });
   if (known) return;
@@ -836,7 +898,7 @@ export function updateStatus() {
   const hintEl = document.getElementById('status-hint');
   const sizeEl = document.getElementById('status-size');
   const tab = activeTab();
-  if (!tab) return;
+  if (!tab || tab.kind === 'queue') return;
 
   const items = state.visibleEntries;
   const selected = selectedEntries();
@@ -1155,10 +1217,6 @@ export function archiveSummaryFor(entry) {
   return pending;
 }
 
-function isoSupported(entry) {
-  return Boolean(entry && !entry.isDir && (entry.ext || '').toLowerCase() === 'iso');
-}
-
 function isoKey(path, mtime) {
   return `${path}|${mtime}`;
 }
@@ -1177,87 +1235,134 @@ function isoInfoFor(path, mtime) {
   return pending;
 }
 
-function isoTileHtml(entry) {
-  if (!isoSupported(entry)) return '';
-  const color = kindColor('archive');
-  return `
-        <div class="iso-tile" data-iso-path="${esc(entry.path)}" data-iso-mtime="${entry.modified || 0}" style="--kind-color:${color};--kind-glow:${rgba(color, 0.14)}">
-          <div class="iso-head">${icon('disc', 11)}<span>ISO</span></div>
-          <div class="iso-disc">${icon('disc', 34)}</div>
-          <div class="iso-label" hidden></div>
-        </div>`;
+export function discSummaryFor(entry) {
+  const key = archiveKey(entry.path, entry.modified || 0);
+  let pending = discCache.get(key);
+  if (!pending) {
+    pending = api.discSummary(entry.path).catch(() => null);
+    discCache.set(key, pending);
+    if (discCache.size > MAX_DISC_CACHE) {
+      const oldest = discCache.keys().next().value;
+      if (oldest !== undefined) discCache.delete(oldest);
+    }
+  }
+  return pending;
 }
 
-function applyIso(el, info) {
-  if (!el) return;
-  const disc = el.querySelector('.iso-disc');
-  const label = el.querySelector('.iso-label');
-  if (info && info.iconUrl && disc) {
-    const img = document.createElement('img');
-    img.alt = '';
-    img.decoding = 'async';
-    img.draggable = false;
-    img.addEventListener('load', () => disc.replaceChildren(img), { once: true });
-    img.src = info.iconUrl;
-  }
-  const text = info && info.label ? String(info.label).trim() : '';
-  if (text && label) {
+function applyDiscHead(el, summary) {
+  const label = el.querySelector('.disc-head-label');
+  if (!label) return;
+  const text = summary && summary.label ? `${summary.format} · ${summary.label}` : summary ? summary.format : '';
+  if (text) {
     label.textContent = text;
     label.title = text;
-    label.hidden = false;
-  }
-  if (text || (info && info.iconFrom)) {
-    el.title = [text, info && info.iconFrom ? `Icon: ${info.iconFrom}` : ''].filter(Boolean).join(' · ');
   }
 }
 
-function pumpIso() {
-  while (isoActive < MAX_ISO_REQUESTS && isoQueue.length) {
-    const job = isoQueue.shift();
+function applyDiscIcon(el, info) {
+  if (!el || !info || !info.iconUrl) return;
+  const holder = el.querySelector('.disc-head-icon');
+  if (!holder) return;
+  const img = document.createElement('img');
+  img.alt = '';
+  img.decoding = 'async';
+  img.draggable = false;
+  img.addEventListener('load', () => holder.replaceChildren(img), { once: true });
+  img.src = info.iconUrl;
+}
+
+function applyDisc(el, summary) {
+  if (!el) return;
+  el.querySelector('.archive-skeleton')?.remove();
+  if (!summary) {
+    el.classList.add('archive-unknown');
+    const note = el.querySelector('.archive-note');
+    if (note) {
+      note.textContent = 'Contents unavailable';
+      note.hidden = false;
+    }
+    el.title = 'Disc contents could not be read';
+    return;
+  }
+  const rows = el.querySelector('.archive-rows');
+  if (rows) {
+    rows.innerHTML = summary.top.slice(0, 4).map(archiveRowHtml).join('');
+    rows.hidden = !summary.top.length;
+  }
+  const kind = el.querySelector('.archive-kind');
+  if (kind) kind.textContent = summary.kind;
+  const files = el.querySelector('[data-role="files"]');
+  const folders = el.querySelector('[data-role="folders"]');
+  if (files) files.textContent = compactCount(summary.files) + (summary.truncated ? '+' : '');
+  if (folders) folders.textContent = compactCount(summary.folders) + (summary.truncated ? '+' : '');
+  const foot = el.querySelector('.archive-foot');
+  if (foot) foot.hidden = false;
+  applyDiscHead(el, summary);
+  el.title = [
+    summary.format,
+    summary.filesystem,
+    summary.label,
+    `${humanCount(summary.files)} ${summary.files === 1 ? 'file' : 'files'}`,
+    `${humanCount(summary.folders)} ${summary.folders === 1 ? 'folder' : 'folders'}`,
+    summary.truncated ? 'partial scan' : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function pumpDisc() {
+  while (discActive < MAX_DISC_REQUESTS && discQueue.length) {
+    const job = discQueue.shift();
     if (!job.el.isConnected) continue;
-    isoActive += 1;
-    isoInfoFor(job.path, job.mtime)
-      .then((info) => {
-        if (job.el.isConnected) applyIso(job.el, info);
+    discActive += 1;
+    discSummaryFor(job.entry)
+      .then((summary) => {
+        if (!job.el.isConnected) return;
+        applyDisc(job.el, summary);
+        if (summary && job.entry.path.toLowerCase().endsWith('.iso')) {
+          isoInfoFor(job.entry.path, job.entry.modified).then((info) => {
+            if (job.el.isConnected) applyDiscIcon(job.el, info);
+          });
+        }
       })
       .finally(() => {
-        isoActive -= 1;
-        pumpIso();
+        discActive -= 1;
+        pumpDisc();
       });
   }
 }
 
-function loadIso(el) {
-  if (!el || el.dataset.isoLoaded === '1') return;
-  el.dataset.isoLoaded = '1';
-  const path = el.dataset.isoPath;
+function loadDisc(el) {
+  if (!el || el.dataset.discLoaded === '1') return;
+  el.dataset.discLoaded = '1';
+  const path = el.dataset.discPath;
   if (!path) return;
-  isoQueue.push({ path, mtime: Number(el.dataset.isoMtime) || 0, el });
-  pumpIso();
+  discQueue.push({ entry: { path, modified: Number(el.dataset.discMtime) || 0 }, el });
+  pumpDisc();
 }
 
-function observeIso() {
-  if (isoObserver) isoObserver.disconnect();
+function observeDisc() {
+  if (discObserver) discObserver.disconnect();
   const scroll = scrollEl();
   if (!scroll) return;
-  const targets = scroll.querySelectorAll('.iso-tile[data-iso-path]');
+  const targets = scroll.querySelectorAll('.disc-tile[data-disc-path]');
   if (!targets.length) return;
 
   if (!('IntersectionObserver' in window)) {
-    targets.forEach(loadIso);
+    targets.forEach(loadDisc);
     return;
   }
-  isoObserver = new IntersectionObserver(
+  discObserver = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
-        isoObserver.unobserve(entry.target);
-        loadIso(entry.target);
+        discObserver.unobserve(entry.target);
+        loadDisc(entry.target);
       }
     },
     { root: scroll, rootMargin: '240px 0px' }
   );
-  targets.forEach((target) => isoObserver.observe(target));
+  targets.forEach((target) => discObserver.observe(target));
 }
 
 function archiveRowHtml(name) {
@@ -2148,6 +2253,7 @@ export function initFiles() {
 export async function refreshFiles({ silent = false } = {}) {
   const tab = activeTab();
   if (!tab) return false;
+  if (tab.kind === 'queue') return true;
   const token = ++state.loadToken;
 
   if (!silent) {
@@ -2163,6 +2269,7 @@ export async function refreshFiles({ silent = false } = {}) {
 
     state.loading = false;
     state.error = null;
+    honorLegacy(listing.entries);
     state.listing = listing;
     state.selection = new Set();
     state.anchorIndex = null;
