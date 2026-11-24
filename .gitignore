@@ -25,3 +25,6 @@ desktop.ini
 
 # Local app data created by portable runs
 /data
+
+# Local conversation exports
+/untracked

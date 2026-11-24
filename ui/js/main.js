@@ -1156,6 +1156,16 @@ function openPalette() {
   palette.openPalette();
 }
 
+// Ctrl+right-click mirrors Ctrl+Menu: the palette replaces any context menu.
+function paletteContextMenu(event) {
+  if (!(event.ctrlKey || event.metaKey) || event.target.closest?.('#terminal-pane')) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (anyOverlayOpen()) return;
+  if (document.querySelector('.palette-backdrop')) palette.closePalette();
+  else openPalette();
+}
+
 function isEditable(target) {
   if (!target) return false;
   const tag = target.tagName;
@@ -1498,6 +1508,7 @@ function bindStaticEvents() {
   });
 
   document.addEventListener('keydown', onKeyDown);
+  window.addEventListener('contextmenu', paletteContextMenu, true);
   window.addEventListener('contextmenu', suppressNativeMenuKey, true);
   window.addEventListener('beforeunload', () => saveSessionNow());
   window.addEventListener('focus', refreshPlaces);

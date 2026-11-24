@@ -21,7 +21,8 @@ treemap visualization of any folder — and it builds as a portable executable f
   that is no longer connected, labeling it *Disconnected*. Right-click a disconnected device and choose
   **Remove from view** to hide it until it reconnects; the entry reappears by itself the next time the
   device is attached.
-- **Smart thumbnails** generated on demand and cached by content hash (512 MB LRU-style cache):
+- **Smart thumbnails** generated on demand and cached by a key over the file path, size and modification time
+  (512 MB LRU-style cache):
   - Windows: images (with EXIF orientation), video/audio posters, PDF first pages through the Windows PDF
     renderer, and Office documents and executable icons via the shell.
   - Linux: images, video posters through `ffmpeg`, and PDF first pages through `pdftoppm` when available.
@@ -70,9 +71,9 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **Font specimens**: `.ttf`, `.otf`, `.woff` and `.woff2` cards and the preview pane render the full ASCII
   sweep — `A–Z`, `a–z`, `0–9` and punctuation — in the actual typeface, loaded lazily for visible tiles through
   the `font://` protocol.
-- **Archive contents**: ZIP, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, GZ, BZ2, RAR (4 and 5) and 7Z cards list the first
-  entries, the archive format, file/folder counts, and a best-guess content type (Application, Source Code,
-  Media Files, Documents, Fonts, 3D Models, Archives, or Mixed Files). Any archive that contains an `.exe`
+- **Archive contents**: ZIP, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, GZ, BZ2, RAR (4 and 5), 7Z and the legacy ARC and
+  LZH archives list their first entries, the archive format, file/folder counts, and a best-guess content type
+  (Application, Source Code, Media Files, Documents, Fonts, 3D Models, Archives, or Mixed Files). Any archive that contains an `.exe`
   file is marked Application regardless of the other entries. ZIP indexes are read from the central
   directory without decompressing entry data; compressed tar streams are scanned with a 256 MB budget, and a
   partial result is marked with `+`. 7Z headers are decoded through their compressed (encoded) form without
@@ -81,10 +82,11 @@ treemap visualization of any folder — and it builds as a portable executable f
   pane instead of a contents list. The preview pane shows the same contents list with total uncompressed size.
 - **Disc image contents**: ISO (ISO 9660/Joliet/UDF) and legacy Atari disk images (ATR, DI, XFD, PRO) cards list
   the files and folders stored inside the image, the filesystem label or volume name when present, file/folder
-  counts and a best-guess content type, using the same card layout as archives. The preview pane shows the full
-  top entries plus the filesystem and volume metadata. Atari images are parsed through their boot-sector
-  layout and DOS 2.x/MyDOS directory entries; copy-protected DCM and ATX images keep the disc-style card and
-  report that their contents cannot be listed.
+  counts and a best-guess content type, using the same card layout as archives; an ISO's autorun icon, when the
+  disc carries one, replaces the generic disc glyph. The preview pane shows the top entries plus the filesystem
+  and volume metadata. Atari images are parsed through their boot-sector layout and DOS 2.x/MyDOS directory
+  entries; DCM images (including their DC3 and DSK aliases) and copy-protected ATX images keep the disc-style
+  card and report that their contents cannot be listed.
 - **Extract archives**: right-click an archive (or use the preview pane's **Extract To…** button) to unpack it
   into a folder that defaults to the archive's own folder plus its name without the extension. ZIP, TAR,
   TAR.GZ/TGZ, TAR.BZ2/TBZ2, GZ, BZ2 and 7Z extract natively; RAR uses an installed bsdtar, 7-Zip or unrar.
@@ -102,8 +104,8 @@ treemap visualization of any folder — and it builds as a portable executable f
   opens the current folder's map in a new tab, gives every first-level subfolder its own visualization tab, or
   exports the visible map as a PNG through a save dialog.
   Folder sizes are summed recursively
-  over the whole subtree and scans have no entry cap; each scan returns one level of folder tiles, and drilling
-  into a folder re-scans it. The treemap fills in progressively while the scan runs, with nested contents shown
+  over the whole subtree and scans have no entry cap; each scan returns the folder's tiles with nested subtrees
+  for the folders that clear the depth threshold, and drilling into a folder re-scans it. The treemap fills in progressively while the scan runs, with nested contents shown
   for any folder taking more than its depth threshold of the section (1% by default, adjustable from 1% to 50% in
   Settings) — one level deeper at a time, each level faded 5% more
   (from 75% opacity) until it would drop below 25% — and tiles, breadcrumbs and drill-down stay clickable even
@@ -158,7 +160,7 @@ treemap visualization of any folder — and it builds as a portable executable f
   cursor down and up by rows and left and right by patterns. A **Sound bank** under the preview actions lets
   you audition any sample (and the single instrument of an `.s3t`/`.s3i` file) on its own, once, at its native
   pitch; right-click a sample to **Export as…** (OGG Vorbis/FLAC/WAV through a save dialog) or use **Quick Export**
-  to write the chosen format next to the module as `<name>-<bank number>`. The player bar treats modules like
+  to write the chosen format next to the module as `<name>-01.ext` (numbering from the bank index). The player bar treats modules like
   any other audio track.
 - **Search** the current folder instantly, or recurse into subfolders with gitignore-aware walking. Which of
   the two the search box does is a setting (**Settings → Browsing → Search subfolders**); the scope button next
@@ -180,9 +182,9 @@ treemap visualization of any folder — and it builds as a portable executable f
   a time with a live progress bar and per-item result; finished entries can be cleared, and the tab survives
   restarts like any other tab.
 - **Legacy formats**: **Settings → Browsing → Support Legacy File Formats** (on by default) natively identifies
-  MS-DOS, Amiga, Commodore, Atari and other classic 8/16-bit file types by reading their contents, so only files
-  that pass a format check are grouped. Identified files join a **Legacy** filter and show their real kind
-  (Atari ATR/XEX/CAS, DI/XFD/APE/ATX/DCM/DSK disk images, CART cartridge images, ARC/LZH/LZW archives,
+  classic Atari 8-bit formats, plus Commodore SID, NES NSF and ARC/LZH/LZW archives, by reading their contents,
+  so only files that pass a format check are grouped. Identified files join a **Legacy** filter and show their
+  real kind (Atari ATR/XEX/CAS, DI/XFD/APE/ATX/DCM/DSK disk images, CART cartridge images, ARC/LZH/LZW archives,
   tokenized Atari BASIC, BASIC XL/XE and Turbo BASIC programs, MAC/65 and C source listings, fonts
   including Daisy-Dot NLQ, GR8/GR9/G15/HIP/RGB/INT95a/Fun with Art/ILC pictures,
   SAP/SID/NSF/RMT/CMC/DMC/ProTracker/TMC/TM2/AMP/AMS/Future Composer music) in cards, list, search, the
@@ -207,6 +209,67 @@ treemap visualization of any folder — and it builds as a portable executable f
 - **Portable mode**: place `portable.txt` next to the executable and settings, session, and thumbnails are kept
   in a `data` folder beside it. On Windows the WebView2 profile moves there too.
 - **Session restore**: tabs, bookmarks, recent folders, thumbnail size, panel state, the playlist, and saved playlists persist across runs.
+
+## Supported file types
+
+The Kind a file gets is decided by its extension through one table shared by the cards, list, filters, search
+and Details column. Contents, previews and details are only added when the file really matches: archives and
+disc images are parsed, PDF encryption is checked, and text is probed for its encoding. Legacy formats are the
+one family whose Kind also depends on content (see below). Grid cards, the preview pane and the Details column
+follow the same table.
+
+| Type | Extensions | How it is detected | Grid thumbnail | Preview pane | Operations |
+| --- | --- | --- | --- | --- | --- |
+| Images | `jpg` `jpeg` `jfif` `png` `gif` `webp` `bmp` `tif` `tiff` `ico` `svg` `avif` `heic` `heif` `raw` `cr2` `nef` | Extension; decoded in-app (EXIF orientation applied); formats the decoder cannot read fall back to the Windows shell thumbnail, or to an icon on Linux | Real thumbnail, generated on demand and cached | Scaled image with dimensions; GIFs play while hovered and return to the still on mouse-out | Open with the default app, reveal, copy path, drag out |
+| Video | `mp4` `mkv` `avi` `mov` `wmv` `flv` `webm` `m4v` `mpg` `mpeg` `3gp` `m2ts` `ogv` | Extension; playability follows the WebView codecs | Poster frame (Windows shell; `ffmpeg` frame on Linux); the card plays a muted loop while hovered | Inline player with poster, scrubbable timeline, duration and resolution; follows the player bar when the same file plays | Play, loop, add to playlist, reveal, drag out |
+| Audio | `mp3` `wav` `flac` `ogg` `oga` `m4a` `aac` `wma` `opus` `aiff` | Extension; decoded by the WebView | Shell-provided artwork/icon on Windows; generic icon elsewhere | Waveform (click to start playback at that point), duration, estimated bitrate, sample rate, channels | Play, loop, add to playlist, drag out |
+| MIDI | `mid` `midi` `rmi` `kar` | Extension; rendered by the built-in General MIDI synth or the chosen `.sf2` SoundFont | Shell icon | Rendered waveform with duration, sample rate and channels | Play, loop, playlist; choose the SoundFont from its card/preview |
+| Tracker modules | `mod` `stm` `s3m` `s3z` `s3t` `s3i` `xm` `xmz` `it` `itz` `mptm` `mptmz` `mdz` | Extension; the module is decoded by the built-in mixer | Shell icon | Live pattern grid with the playing row highlighted (click a row to start there), title/tracker/order/pattern/sample counts, position | Play; arrow keys move the pattern cursor while stopped; Sound bank audition and OGG/FLAC/WAV sample export |
+| 3D models (rendered) | `stl` `obj` `ply` `3mf` | Extension; the mesh is parsed locally (3MF through its own ZIP/XML reader) | Shaded three-quarter render from the built-in software rasterizer, in material colors for 3MF | Slowly rotating WebGL view; 3MF adds title, designer, slicer, object/triangle counts, extent and material swatches; rotation can be disabled in Settings | Open, reveal, copy path |
+| 3D models (measured only) | `gltf` `glb` `off` | Extension; parsed only for bounds | Icon | Icon; the Details column shows the bounding-box dimensions from the mesh | Open, reveal |
+| Other 3D formats | `dae` `fbx` `blend` `3ds` `usd` `usda` `usdz` `abc` `step` `stp` `iges` `igs` `wrl` `vrml` `lwo` | Extension only — no parser, no renderer | Kind icon | Icon with metadata | Open, reveal |
+| PDF | `pdf` | Extension; first page rendered by the Windows PDF engine or `pdftoppm` on Linux; encrypted files are confirmed by scanning the trailer for `/Encrypt` | First-page thumbnail; a lock overlay for password-protected files | First-page image with metadata, or a password-required message | Open, reveal |
+| Office documents | `doc` `docx` `xls` `xlsx` `ppt` `pptx` `odt` `ods` `odp` | Extension; thumbnails come from the Windows shell, so they exist only where an Office handler is installed (none on Linux) | Shell thumbnail on Windows, icon otherwise | Icon with metadata | Open, reveal |
+| Documents (plain) | `txt` `md` `markdown` `log` `csv` `tsv` `rtf` `epub` `mobi` | Extension; `txt`/`md`/`log`/`csv`/`tsv`/`rtf` never request a shell thumbnail, `epub`/`mobi` do on Windows when a handler exists | Icon, except Markdown (rendered card below) and `epub`/`mobi` on Windows | UTF-8 or UTF-16 (LE/BE by BOM) text, up to 96 KB read and 14,000 characters shown, with a truncation/encoding note; binary files report that instead of text | Open, reveal, copy path |
+| Code and config | `rs` `js` `mjs` `cjs` `ts` `tsx` `jsx` `py` `rb` `go` `java` `c` `h` `cpp` `hpp` `cc` `cs` `php` `swift` `kt` `kts` `scala` `sh` `bash` `zsh` `ps1` `bat` `cmd` `lua` `r` `sql` `html` `htm` `css` `scss` `sass` `less` `vue` `svelte` `astro` `json` `jsonc` `yaml` `yml` `toml` `xml` `ini` `cfg` `conf` `env` `gradle` `cmake` `ipynb` | Extension; same text probe as documents | Icon, except HTML/Markdown | Plain monospace text preview (no syntax highlighting) with the same length and encoding limits | Open, reveal, copy path |
+| HTML and Markdown pages | `html` `htm` `md` `markdown` | Extension; HTML is served through a sandboxed `page://` frame with its sibling assets, Markdown is converted by the built-in renderer | Live page thumbnail in a sandboxed iframe (scripts and navigation disabled), mounted only for visible cards | Source text preview | Open in the default app, reveal |
+| Archives (listed) | `zip` `rar` `7z` `tar` `gz` `tgz` `bz2` `tbz2` `tbz` | Extension plus header parsing: ZIP central directory (Zip64), TAR blocks, tar-inside-gzip/bzip2 sniffing, RAR 4/5 and 7Z headers; encryption flags mark the archive locked | Contents tile: format, first entries, file/folder counts, content type, total size, padlock when encrypted | The same list (up to six entries), counts, total uncompressed size, protection state | **Extract To…** (ZIP, TAR family, GZ, BZ2 and 7Z natively; RAR through bsdtar/7-Zip/unrar), open, reveal |
+| Other archive-type extensions | `xz` `zst` `dmg` `cab` `rpm` `deb` | Extension only — no contents reader, no extractor | Icon | Icon with metadata | Open, reveal |
+| ISO disc images | `iso` | ISO 9660/Joliet/UDF structures are parsed; volume label, filesystem and an autorun icon come from the image | Contents tile with the disc label and an autorun icon when present | Contents list plus filesystem, volume label and counts | Open, reveal |
+| Atari disk images | `atr` `di` `xfd` `pro`; recognized as discs without contents: `dcm` `dc3` `dsk` `atx` | Requires the Legacy format setting; contents parsed from the boot layout and DOS 2.x/MyDOS directories and VTOC; DCM/DC3/DSK and ATX have no readable directory | Disc contents tile, or a disc-style card reporting that contents are unavailable for DCM/DC3/DSK/ATX | The same contents/metadata or the unavailable message | Open, reveal |
+| Fonts | `ttf` `otf` `woff` `woff2` | Extension; the face is loaded through the `font://` protocol | ASCII specimen (`A–Z`, `a–z`, `0–9`, punctuation) set in the actual typeface | Large specimen of the same sweep | Open, reveal |
+| SoundFonts | `sf2` | Extension; the SoundFont is parsed for its metadata | Piano-keyboard card with a `MIDI` badge when the font is active | Font name, preset/instrument/sample counts, engine and version | **Use for MIDI** / **Use built-in**, open, reveal |
+| Executables and shortcuts | `exe` `dll` `so` `dylib` `msi` `msix` `appx` `app` `appimage` `url`; `lnk` | Extension; `.lnk` files are labeled *Shortcut* and get a link badge | Shell icon (the shortcut's target on Windows) | Icon with metadata | Open, reveal |
+| Unknown files | anything else | Extension only, shown as `File: EXT` | Kind icon | Icon with metadata | Open, reveal |
+
+Common operations are available on every card and row regardless of type: rename, copy/cut/paste, move to
+Trash, properties, drag out to other applications, and — on Windows — the real shell **System Menu**.
+Archive and disc files additionally show their contents in the card, list Details column and preview pane.
+
+### Legacy formats
+
+**Settings → Browsing → Support Legacy File Formats** (on by default) adds content sniffers for classic
+formats. A file is only relabeled when its header, structure or documented size passes the per-format test
+(the first 13 KB are read); files that fail keep their extension-based kind. Identified files join the
+**Legacy** filter, appear with their real format name in cards, list, search, palette and preview, and revert
+to the plain extension kind when the setting is turned off. Content listing and extraction are only available
+for the legacy disc images and archives marked below.
+
+| Family | Extensions | Content test | Shown as |
+| --- | --- | --- | --- |
+| Atari disk images | `atr` `di` `xfd` `pro` `atx` `dcm` `dc3` `dsk` | ATR header and geometry, DI header and sector table, XFD by sector-size multiple (headerless), APE ProSystem sector count, `AT8X` magic for ATX, DCM header flags | Disk images (ATR/DI/XFD/PRO contents are listed; DCM/DC3/DSK/ATX contents unavailable) |
+| Cartridges | `car` | `CART` + type code header | Cartridge image |
+| Executables and system files | `xex` `bin` `com` `sys` `ars` `aut` | Atari binary `$FF $FF` (or `$00 $00`) segment structure | Executable / system / autorun file |
+| Cassettes | `cas` | `FUJI` magic | Cassette image |
+| Archives | `arc` `lzh` `lzw` | ARC `$1A $08`, LZH header levels, Unix-compress `$1F $9D` header | ARC/LZH list their contents; LZW is identified only |
+| BASIC programs | `bas` `sav` `abs` `tb` `tba` `tbs` `tur` `bxl` `bxe` | Seven-pointer Atari BASIC save header (LOMEM through STARP), variable-table alignment and line chain (BASIC XL/XE saves share it) | BASIC, BASIC XL/XE or Turbo BASIC program (by extension) |
+| Sources and listings | `asm` `lst` `src` `act` `pas` `hlp` `4th` `for` `fth` `pil` `plo` `qik` `qui` `lgo` `c65` `ccc` `mac` `m65` | MAC/65 files need the `$FE $FE` size and ascending line chain; the rest must be at least 95% printable Atari text | Assembler/Action!/Pascal/Forth/Pilot/Quick/Logo/C source, Atari listing or text file, MAC/65 source |
+| Fonts | `chr` `fnt` `fon` `nlq` | 512/768/1024/2048-byte font shapes; Daisy-Dot NLQ by its 91-glyph walk | Atari font, Daisy-Dot NLQ font |
+| Pictures | `gr8` `gr9` `g15` `mic` `p15` `pi8` `pi9` `256` `ap2` `apc` `pic` `int` `fwa` `ilc` `hip` `rgb` `b` `g` `r` | Documented frame sizes for headerless bitmaps; `INT95a` and Fun with Art headers checked byte by byte | Graphics 8/9/15, Atari picture (`mic`/`pic`), Paint 256, HIP, RGB, INT95a, Fun with Art, Interlaced picture |
+| Music | `sap` `sid` `nsf` `rmt` `cmc` `dmc` `mpt` `d8` `d15` `md8` `ft` `tmc` `tm2` `amp` `am2` `ams` | Per-format signatures (`SAP`, `PSID`/`RSID`, `NESM`, RMT/CMC/ProTracker/AMP/AMS headers, Future Composer magic) | SAP/SID/NSF/RMT/CMC/DMC/ProTracker music and modules, converted MOD module, TMC/TM2/AMP/AMS/Future Composer music |
+
+Legacy files have no built-in renderer, player or converter; the only extras are the contents listings for the
+ATR/DI/XFD/PRO disk images and the ARC/LZH archives noted above.
 
 ## Portable builds
 
@@ -281,7 +344,8 @@ cargo build --release    # plain release binary (used by the packaging scripts)
 ```
 
 The frontend is plain ES modules + CSS in `ui/` — no Node.js or bundler required. Tauri embeds it into
-the executable at compile time.
+the executable at compile time. The process model, command surface, protocols and every subsystem are
+documented in [docs/Internals.md](docs/Internals.md).
 
 ## Keyboard shortcuts
 
@@ -315,7 +379,7 @@ the executable at compile time.
 | Arrows, `Home`, `End`, `PageUp`, `PageDown` | Move focus (hold `Shift` to extend selection); in grid view `←` / `→` move the cursor, in list view they go up / enter |
 | Arrows in the tracker pattern grid | While stopped, move the tracker cursor by row (`↑`/`↓`) or pattern (`←`/`→`) |
 | `Menu` (application key) | Open the context menu at the current focus; the command palette opens when nothing is selected |
-| `Ctrl+Menu` | Command palette, bypassing the context menu |
+| `Ctrl+Menu`, Ctrl+right-click | Command palette, bypassing the context menu |
 | `Alt+Menu` | Open the window (title bar) menu on Windows |
 | `Escape` | Clear search / selection, or close overlays |
 
@@ -325,67 +389,26 @@ gestures keep their standard keys. Paths typed into the path bar or search compl
 to the current folder (or from an absolute/`~` prefix, case-insensitively), and `Enter` in search
 opens a typed path instead of filtering.
 
-## How it works
+## Transparent Footprint
 
-- `src-tauri/src/fsops.rs` — directory listings, places/drives, previews, clipboard, copy/move/delete,
-  folder creation, renaming, and filesystem watching (`fs:changed`).
-- `src-tauri/src/thumbs.rs` — hash-keyed thumbnail cache, image decoding with orientation, Windows shell
-  thumbnails, model renders for `.stl`/`.obj`/`.ply`/`.3mf`, and Linux `ffmpeg`/`pdftoppm` helpers. Served
-  through the `thumb://` / `http://thumb.localhost` protocol with immutable cache headers.
-- `src-tauri/src/viz.rs` — recursive folder scan with no entry cap that streams partial trees through progress
-  events and supports generation-based cancellation; returns a two-level tree with deeper levels populated
-  along folders that dominate their parents, plus largest files and extension statistics.
-- `src-tauri/src/search.rs` — fuzzy, gitignore-aware recursive filename search.
-- `src-tauri/src/legacy.rs` — content sniffers for legacy formats (ATR/XEX/CAS/ARC, DI/XFD/PRO/ATX/DCM/DSK
-  disk images, CART cartridges, LZH/LZW archives, tokenized BASIC, BASIC XL/XE and Turbo BASIC programs,
-  MAC/65 and C listings, fonts, pictures, SID/NSF/SAP and the Atari MPT/CMC/DMC/TMC/TM2/RMT/AMP/AMS/FC
-  module families); listings and search call it
-  per candidate extension and only label a file when its header and structure pass the test.
-- `src-tauri/src/iso.rs` — ISO 9660, Joliet and UDF disc reader: path resolution, file reads, the autorun
-  label/icon lookup cached as a PNG, and the recursive contents summary shown on disc cards and in previews.
-- `src-tauri/src/disk.rs` — Atari disk image reader (ATR, DI, XFD and APE ProSystem headers) that maps image
-  sectors through their boot layout, walks DOS 2.x/MyDOS directories and VTOC, and feeds the disc summary;
-  ISO paths are delegated to `iso.rs`.
-- `src-tauri/src/shellmenu.rs` — Windows shell `IContextMenu` enumeration and invocation behind the System Menu.
-- `src-tauri/src/network.rs` — shared-folder discovery for the sidebar: `WNetEnumResourceW` for the browse
-  list and the shell Network folder for the machines Windows discovers by itself. Both run on their own
-  threads with a time budget, because a machine that is offline can stall either call for minutes.
-- `src-tauri/src/fonts.rs` — streams `.ttf`/`.otf`/`.woff`/`.woff2` bytes with the right media type over the
-  `font://` / `http://font.localhost` protocol so the UI can register them as live `FontFace` specimens.
-- `src-tauri/src/pages.rs` — serves an HTML file and its sibling assets (CSS, images, fonts, media) over the
-  `page://` / `http://page.localhost` protocol so grid cards can render the page in a sandboxed frame.
-  Markdown files are converted to a styled HTML document by `md.rs` before being served the same way.
-- `src-tauri/src/md.rs` — the Markdown subset renderer used for `.md` card previews: headings, fences,
-  lists, tables, quotes, links and images, with raw HTML escaped and `javascript:` targets rejected.
-- `src-tauri/src/settings.rs` — atomic JSON settings/session storage.
-- `src-tauri/src/lib.rs` — app bootstrap, including the per-user Explorer registration under
-  `Directory\shell\AltFileExplore`, and single-instance forwarding: a second launch with `--path` focuses the
-  running window, navigates it, and exits.
-- `src-tauri/src/mesh.rs` — mesh parsing for OBJ, STL (ASCII and binary), PLY (ASCII and binary) and
-  glTF/GLB/OFF: flat triangle lists for the renderer, bounding-box extents for the Details column, and
-  sampled triangle corners streamed to the preview viewer as a binary payload (with per-facet colors and a
-  scene summary for 3MF).
-- `src-tauri/src/threemf.rs` — the 3MF reader: its own ZIP + XML scanner, multi-file packages, build items,
-  components and transforms, spec materials, Bambu/Orca and PrusaSlicer configs, and painted-region decoding.
-- `src-tauri/src/render.rs` — the software rasterizer behind model thumbnails: orthographic fit, a 2×
-  supersampled z-buffer, two-sided Lambert shading and depth fade, so a thumbnail needs no shell handler or GPU.
-- `src-tauri/src/archive.rs` — header-only archive summaries for the cards, preview pane and Details column:
-  ZIP central directory (including Zip64), TAR block headers, gzip/bzip2-decompressed tar streams, plain
-  gzip/bzip2, RAR 4/5 block walks, and 7Z headers (decoded through `sevenz-rust2` when the header is encoded).
-  Encryption flags (ZIP general-purpose bit 0, RAR 4/5 encryption headers, 7Z AES coders) mark an archive as
-  locked so the UI can replace contents with a padlock. It also votes on a content type from entry extensions.
-- `src-tauri/src/extract.rs` — archive extraction for the Extract To… action: ZIP through `zip`, the tar family
-  through `tar` with flate2/bzip2, plain gzip/bzip2 single files, 7Z through `sevenz-rust2`, and RAR through an
-  installed bsdtar, 7-Zip or unrar. Entry paths are sanitized to stay inside the destination folder.
-- `ui/js/` — the application: `files.js` (rendering, selection, lazy thumbnails), `fonts.js` (font specimens),
-  `pages.js` (live sandboxed HTML and rendered Markdown card thumbnails), `details.js` (the smart Details
-  column), `model.js` (rotating WebGL model preview), `viz.js` (treemap), `preview.js`, `ops.js`,
-  `palette.js`, `settings.js`, and `main.js` (navigation, tabs, shortcuts).
+Everything the app writes lives in one of two places, chosen at startup:
 
-Data locations:
+- **Portable** (`portable.txt` beside the executable): settings, session and playlists in `<exe dir>/data`;
+  thumbnails in `<exe dir>/data/thumbnails`; the treemap cache in `<exe dir>/data/viz-cache`. On Windows the
+  WebView2 profile also moves to `<exe dir>/data/webview`, so the portable copy keeps its WebView data there too.
+- **Installed**: settings/session in the platform app-data directory and thumbnails in the platform app-cache
+  directory, both under the `dev.h3rb.altfileexplorer` identifier; the WebView2 profile stays in its default
+  location.
 
-- Portable (`portable.txt` beside the executable): `<exe dir>/data` and `<exe dir>/data/thumbnails`.
-- Installed: platform app-data/app-cache directories (`dev.h3rb.altfileexplorer`).
+Within that footprint every file has a clear purpose: `settings.json` is the saved session (tabs, bookmarks,
+recent folders, keybindings, playback queue and playlists, appearance and browsing preferences), `thumbnails/` is
+a regenerable cache capped at 512 MB, and `viz-cache/` is a regenerable treemap cache. Deleting any of it only
+loses state or caches that the app rebuilds.
+
+Nothing else on the system is modified. The only registry writes are the optional per-user **Explore in AltFile**
+context-menu entries, installed and removed by the Settings button. There is no telemetry and no background
+service; the app reaches the network only to check GitHub for updates and to enumerate LAN shares, and every
+preview is computed locally.
 
 ## License
 
